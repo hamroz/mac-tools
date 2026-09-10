@@ -17,7 +17,8 @@ final class WorkspaceSettingsTests: XCTestCase {
         XCTAssertEqual(WorkspaceSettings(defaults: defaults).mode, .allWorkspaces)
     }
 
-    func test_BothModesHideInMissionControlAndExcludeFullScreen() {
+    // Configuration regression check, not an end-to-end Mission Control test.
+    func test_BothModesUseTransientAndExcludeFullScreen() {
         for mode in NoteWorkspaceMode.allCases {
             let behavior = mode.collectionBehavior
             XCTAssertTrue(behavior.contains(.transient))
@@ -52,6 +53,8 @@ final class WorkspaceSettingsTests: XCTestCase {
             settings.setMode(mode)
             XCTAssertTrue(controller.window === window)
             XCTAssertEqual(window.collectionBehavior, mode.collectionBehavior)
+            XCTAssertEqual(window.level.rawValue, Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+            XCTAssertFalse(window.ignoresMouseEvents)
             XCTAssertEqual(window.frame, frame)
         }
         XCTAssertEqual(frameChanges, 0)

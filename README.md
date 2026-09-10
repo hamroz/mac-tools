@@ -43,7 +43,7 @@ cd /Users/rootadmin/side-projects/mac-tools
 open "$HOME/Applications/Mac Tools.app"
 ```
 
-Look for the stacked-squares icon in the menu bar at the top of the screen. Choose **New Note**, or press **Control–Option–N**. Mac Tools intentionally has no Dock icon. Click inside a note to type, drag its top strip to move it, and drag its edges to resize it. Hover over the top-right corner to change color or close the note. **Manage Notes** lets you restore deleted notes. Notes stay behind regular app windows; show the desktop to see them.
+Look for the stacked-squares icon in the menu bar at the top of the screen. Choose **New Note**, or press **Control–Option–N**. Mac Tools intentionally has no Dock icon. Click inside a note to type, drag its top strip to move it, and drag its edges to resize it. Hover over the top-right corner to change color or close the note. **Manage Notes** lets you restore deleted notes. Notes stay behind regular app windows; move or minimize covering windows to see them. Show Desktop (Command–F3/hot corner) currently hides notes too; this is an unresolved limitation.
 
 If you cannot find the menu-bar icon, open Mac Tools again while it is already running; this opens Manage Notes.
 
@@ -59,7 +59,15 @@ If a notes file cannot be decoded, Mac Tools makes a uniquely named recovery cop
 
 ## Verification
 
-The test suite covers storage and recovery failures, deletion/restore, expiration, disconnected and resized displays, shortcut presentation and live menu updates, multiple tool registration, and native window levels/flags. Physical multi-monitor changes, Mission Control, Stage Manager, and login approval still need manual checks on your Mac; unit tests cannot prove those desktop interactions.
+The test suite covers storage and recovery failures, deletion/restore, expiration, disconnected and resized displays, shortcut presentation and live menu updates, multiple tool registration, and native window levels/flags. Physical multi-monitor changes, Show Desktop, Mission Control, Stage Manager, and login approval still need manual checks on your Mac; unit tests cannot prove those desktop interactions.
+
+For desktop presentation changes, check both workspace modes:
+
+- **Show Desktop** (Command–F3 or a configured hot corner): the requested behavior is to remain editable at the saved position. This is NOT currently implemented; the restored baseline hides notes too.
+- **Mission Control** (three-finger swipe up): notes should not appear over the overview.
+- Return to the desktop and verify typing, dragging, resizing, and normal windows covering the notes.
+
+The restored baseline is desktop-icon level + 1 with `transient`: editing works and notes hide in Mission Control, but Show Desktop also hides them. Two attempted fixes were rejected in hands-on testing: wallpaper level + 1 with `stationary` prevented hover/editing; the exact desktop-icon level with `stationary` also prevented editing and showed notes in Mission Control. Do not ship either combination again. Unit tests only check configuration and local hit targets; they cannot prove desktop interaction or detect Finder intercepting input. A Show Desktop fix must be verified for actual hover, editing, dragging, and both overview modes before replacing this baseline.
 
 ## Architecture
 

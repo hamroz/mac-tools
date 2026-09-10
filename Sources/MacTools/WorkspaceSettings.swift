@@ -25,8 +25,9 @@ enum NoteWorkspaceMode: String, CaseIterable, Identifiable {
     }
 
     var collectionBehavior: NSWindow.CollectionBehavior {
-        // transient is AppKit's documented hidden-by-Exposé behavior. Never
-        // combine it with stationary (visible in Mission Control) or managed.
+        // transient hides notes in Mission Control, but also during Show Desktop.
+        // stationary reintroduces the Mission Control overlay regression.
+        // These flags are mutually exclusive; do not combine them.
         var behavior: NSWindow.CollectionBehavior = [.transient, .fullScreenNone, .ignoresCycle]
         if self == .allWorkspaces { behavior.insert(.canJoinAllSpaces) }
         return behavior

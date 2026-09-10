@@ -173,6 +173,9 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.minSize = NoteGeometry.minimumSize
         window.maxSize = NoteGeometry.maximumSize
+        // Keep notes above Finder's desktop input surface so they can be edited.
+        // Pair with transient to exclude them from Mission Control. Show Desktop
+        // also hides them; lowering this level is not a usable workaround.
         window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
         window.collectionBehavior = workspaceSettings.mode.collectionBehavior
         window.animationBehavior = .utilityWindow
