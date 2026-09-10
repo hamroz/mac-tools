@@ -7,11 +7,14 @@ import SwiftUI
 final class StickyWindowCoordinator: NSObject {
     private let repository: StickyNoteRepository
     private let workspaceSettings: WorkspaceSettings
+    private let desktopPresentation: DesktopPresentation?
     private var controllers: [UUID: StickyNoteWindowController] = [:]
 
-    init(repository: StickyNoteRepository, workspaceSettings: WorkspaceSettings = WorkspaceSettings()) {
+    init(repository: StickyNoteRepository, workspaceSettings: WorkspaceSettings = WorkspaceSettings(),
+         desktopPresentation: DesktopPresentation? = nil) {
         self.repository = repository
         self.workspaceSettings = workspaceSettings
+        self.desktopPresentation = desktopPresentation
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(reconcileDisplays), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reconcileDisplays), name: NSWorkspace.didWakeNotification, object: nil)
@@ -105,6 +108,7 @@ final class StickyWindowCoordinator: NSObject {
             frame: adjustedFrame,
             focusInitially: focus,
             workspaceSettings: workspaceSettings,
+            desktopPresentation: desktopPresentation,
             onTextChanged: { [weak self] id, text in self?.repository.updateText(id: id, text: text) },
             onPaletteChanged: { [weak self] id, palette in self?.repository.updatePalette(id: id, palette: palette) },
             onFrameChanged: { [weak self] id, frame, displayID in
@@ -131,7 +135,8 @@ final class StickyWindowCoordinator: NSObject {
 
 @MainActor
 private final class StickyNoteWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
+    var suppressedForOverview = false
+    override var canBecomeKey: Bool { !suppressedForOverview }
     override var canBecomeMain: Bool { false }
 }
 
@@ -144,12 +149,16 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
     private var textSaveTask: Task<Void, Never>?
     private var isReadyForFrameUpdates = false
     private var workspaceObservation: AnyCancellable?
+    private var presentationObservation: AnyCancellable?
+    private var currentWorkspaceMode: NoteWorkspaceMode
+    private var overviewState: DesktopOverviewState = .unavailable
 
     init(
         note: StickyNoteRecord,
         frame: CGRect,
         focusInitially: Bool,
         workspaceSettings: WorkspaceSettings = WorkspaceSettings(),
+        desktopPresentation: DesktopPresentation? = nil,
         onTextChanged: @escaping (UUID, String) -> Void,
         onPaletteChanged: @escaping (UUID, NotePalette) -> Void,
         onFrameChanged: @escaping (UUID, CGRect, UInt32?) -> Void,
@@ -158,6 +167,7 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
         noteID = note.id
         self.onTextChanged = onTextChanged
         self.onFrameChanged = onFrameChanged
+        currentWorkspaceMode = workspaceSettings.mode
 
         let window = StickyNoteWindow(
             contentRect: frame,
@@ -197,8 +207,13 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
         window.setFrame(frame, display: false)
         window.delegate = self
         isReadyForFrameUpdates = true
-        workspaceObservation = workspaceSettings.$mode.sink { [weak window] mode in
-            window?.collectionBehavior = mode.collectionBehavior
+        workspaceObservation = workspaceSettings.$mode.sink { [weak self] mode in
+            self?.currentWorkspaceMode = mode
+            self?.applyDesktopPresentation()
+        }
+        presentationObservation = desktopPresentation?.$state.sink { [weak self] state in
+            self?.overviewState = state
+            self?.applyDesktopPresentation()
         }
     }
 
@@ -208,7 +223,7 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
 
     func show(focus: Bool) {
         guard let window else { return }
-        if focus {
+        if focus && !overviewState.hidesNotes {
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
         } else {
@@ -248,8 +263,21 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func saveFrameIfReady() {
-        guard isReadyForFrameUpdates, let window else { return }
+        guard isReadyForFrameUpdates, !overviewState.hidesNotes, let window else { return }
         onFrameChanged(noteID, window.frame, StickyWindowCoordinator.displayID(for: window.screen))
+    }
+
+    private func applyDesktopPresentation() {
+        guard let window = window as? StickyNoteWindow else { return }
+        window.collectionBehavior = overviewState.collectionBehavior(for: currentWorkspaceMode)
+        window.suppressedForOverview = overviewState.hidesNotes
+        if overviewState.hidesNotes, window.isKeyWindow {
+            window.resignKey()
+        }
+        window.ignoresMouseEvents = overviewState.hidesNotes
+        // Do not order out/recreate windows: that risks losing individual-Space
+        // placement. Restoring alpha must not activate the app or steal focus.
+        window.alphaValue = overviewState.hidesNotes ? 0 : 1
     }
 
     private func scheduleTextChange(_ text: String) {

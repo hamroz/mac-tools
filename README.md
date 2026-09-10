@@ -25,13 +25,13 @@ The scripts use the SDK selected by `xcode-select` (your installed Xcode). For a
 
 The app bundle is written to `.build/app/Mac Tools.app` and ad-hoc signed for local use.
 
-To install it for the current user:
+To install it in Applications (quit Mac Tools first):
 
 ```sh
 ./scripts/install-app.sh
 ```
 
-This copies the app to `~/Applications/Mac Tools.app`. Launch at Login is intentionally off by default and can be enabled from Mac Tools Settings after installation.
+This copies the app to `/Applications/Mac Tools.app`, preserving any previous installation under `.build/install-backup.*`. Launch at Login is intentionally off by default and can be enabled from Mac Tools Settings after installation.
 
 ## Run it (no Swift knowledge needed)
 
@@ -40,10 +40,14 @@ Open Terminal, paste the following, and press Return:
 ```sh
 cd /Users/rootadmin/side-projects/mac-tools
 ./scripts/install-app.sh
-open "$HOME/Applications/Mac Tools.app"
+open "/Applications/Mac Tools.app"
 ```
 
-Look for the stacked-squares icon in the menu bar at the top of the screen. Choose **New Note**, or press **Control–Option–N**. Mac Tools intentionally has no Dock icon. Click inside a note to type, drag its top strip to move it, and drag its edges to resize it. Hover over the top-right corner to change color or close the note. **Manage Notes** lets you restore deleted notes. Notes stay behind regular app windows; move or minimize covering windows to see them. Show Desktop (Command–F3/hot corner) currently hides notes too; this is an unresolved limitation.
+Look for the stacked-squares icon in the menu bar at the top of the screen. Choose **New Note**, or press **Control–Option–N**. Mac Tools intentionally has no Dock icon. Click inside a note to type, drag its top strip to move it, and drag its edges to resize it. Hover over the top-right corner to change color or close the note. **Manage Notes** lets you restore deleted notes. Notes stay behind regular app windows.
+
+On first launch, Settings opens with **Show Desktop → Enable Accessibility…**. Allow **Mac Tools** under System Settings → Privacy & Security → Accessibility. The old **Mac Tools Desktop Test** permission is separate and does not cover this app. After approval, press **Recheck**, then enter and exit Show Desktop once. Repeat this synchronization after each app launch or Dock restart. Notes then stay pinned and editable during Show Desktop. The brief flash while entering Mission Control remains a known limitation accepted for this local build.
+
+Without permission or before synchronization, the app uses its original behavior: notes remain editable but slide away during Show Desktop. The observer uses undocumented Dock notification names, which may change with macOS updates. Rebuilding an ad-hoc signed app can invalidate its Accessibility approval; if macOS stops recognizing it, remove and re-add the installed `/Applications/Mac Tools.app` entry. Do not rebuild after granting access unless you intend to update the app.
 
 If you cannot find the menu-bar icon, open Mac Tools again while it is already running; this opens Manage Notes.
 
@@ -63,11 +67,11 @@ The test suite covers storage and recovery failures, deletion/restore, expiratio
 
 For desktop presentation changes, check both workspace modes:
 
-- **Show Desktop** (Command–F3 or a configured hot corner): the requested behavior is to remain editable at the saved position. This is NOT currently implemented; the restored baseline hides notes too.
-- **Mission Control** (three-finger swipe up): notes should not appear over the overview.
+- **Show Desktop** (Command–F3 or a configured hot corner): after permission and synchronization, notes remain editable at the saved position.
+- **Mission Control** (three-finger swipe up): notes hide after the Dock notification arrives. A brief entry flash remains unresolved.
 - Return to the desktop and verify typing, dragging, resizing, and normal windows covering the notes.
 
-The restored baseline is desktop-icon level + 1 with `transient`: editing works and notes hide in Mission Control, but Show Desktop also hides them. Two attempted fixes were rejected in hands-on testing: wallpaper level + 1 with `stationary` prevented hover/editing; the exact desktop-icon level with `stationary` also prevented editing and showed notes in Mission Control. Do not ship either combination again. Unit tests only check configuration and local hit targets; they cannot prove desktop interaction or detect Finder intercepting input. A Show Desktop fix must be verified for actual hover, editing, dragging, and both overview modes before replacing this baseline.
+The synchronized configuration uses desktop-icon level + 1 with `stationary`, plus Dock mode observation to hide notes and disable input during Mission Control. The user verified the core interaction in the isolated test and explicitly requested promotion with the remaining flash on 2026-09-10. Unsynchronized/permission-failure fallback is `transient`. Two earlier approaches were rejected: wallpaper level + 1 with `stationary` prevented hover/editing; the exact desktop-icon level with `stationary` also prevented editing and showed notes in Mission Control. Do not ship either combination again. Unit tests cannot prove desktop interaction or timing. See `docs/show-desktop-prototype.md` for the evidence and outstanding checks.
 
 ## Architecture
 

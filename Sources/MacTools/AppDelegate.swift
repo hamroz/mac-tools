@@ -5,9 +5,18 @@ import MacToolsCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var registry: ToolRegistry?
+    private var desktopProbe: DesktopProbe?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+
+        if Bundle.main.bundleIdentifier == "com.local.MacTools.DesktopProbe" {
+            configureEditingMenu()
+            let probe = DesktopProbe()
+            desktopProbe = probe
+            probe.start()
+            return
+        }
 
         let repository = StickyNoteRepository()
         let module = DesktopStickiesModule(repository: repository)
@@ -20,10 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        desktopProbe?.stop()
         registry?.stopAll()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let desktopProbe { desktopProbe.showControls(); return true }
         registry?.modules.first?.showManager()
         return true
     }

@@ -14,6 +14,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     private let windowCoordinator: StickyWindowCoordinator
     private let hotKeyManager: HotKeyManager
     private let workspaceSettings: WorkspaceSettings
+    private let overviewMonitor: DockOverviewMonitor
     private let launchAtLoginManager = LaunchAtLoginManager()
     private var managerWindow: ManagerWindowController?
     private var settingsWindow: SettingsWindowController?
@@ -24,7 +25,10 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         let workspaceSettings = WorkspaceSettings()
         self.workspaceSettings = workspaceSettings
         self.repository = repository
-        self.windowCoordinator = StickyWindowCoordinator(repository: repository, workspaceSettings: workspaceSettings)
+        let presentation = DesktopPresentation()
+        self.overviewMonitor = DockOverviewMonitor(presentation: presentation)
+        self.windowCoordinator = StickyWindowCoordinator(repository: repository, workspaceSettings: workspaceSettings,
+                                                        desktopPresentation: presentation)
         self.hotKeyManager = hotKeyManager
         super.init()
         hotKeyManager.onPressed = { [weak self] in
@@ -33,6 +37,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     }
 
     func start() {
+        overviewMonitor.start()
         windowCoordinator.restoreActiveNotes()
         hotKeyManager.start()
         maintenanceTask?.cancel()
@@ -43,6 +48,11 @@ final class DesktopStickiesModule: NSObject, ToolModule {
                 self?.repository.purgeDeleted(olderThan: 30)
             }
         }
+        // Explain permission/synchronization without silently requesting access.
+        if !UserDefaults.standard.bool(forKey: "desktopPinningSetupShown") {
+            UserDefaults.standard.set(true, forKey: "desktopPinningSetupShown")
+            showSettings()
+        }
     }
 
     func stop() {
@@ -50,6 +60,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         maintenanceTask = nil
         hotKeyManager.stop()
         windowCoordinator.flushPendingChanges()
+        overviewMonitor.stop()
     }
 
     func makeMenuItems() -> [NSMenuItem] {
@@ -93,7 +104,8 @@ final class DesktopStickiesModule: NSObject, ToolModule {
             settingsWindow = SettingsWindowController(
                 hotKeyManager: hotKeyManager,
                 launchAtLoginManager: launchAtLoginManager,
-                workspaceSettings: workspaceSettings
+                workspaceSettings: workspaceSettings,
+                overviewMonitor: overviewMonitor
             )
         }
         settingsWindow?.show()

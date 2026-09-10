@@ -1,0 +1,20 @@
+#!/bin/zsh
+set -euo pipefail
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${SCRIPT_DIR:h}"
+cd "$PROJECT_DIR"
+export SDKROOT="${MAC_TOOLS_SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}"
+export CLANG_MODULE_CACHE_PATH="$PROJECT_DIR/.build/clang-module-cache"
+SWIFT_ARGS=(--disable-sandbox --scratch-path "$PROJECT_DIR/.build/swiftpm-probe")
+swift build -c release "${SWIFT_ARGS[@]}"
+BIN_DIR="$(swift build -c release "${SWIFT_ARGS[@]}" --show-bin-path)"
+PROBE_DIR="$PROJECT_DIR/.build/probe/Mac Tools Desktop Test.app"
+mkdir -p "$PROBE_DIR/Contents/MacOS" "$PROBE_DIR/Contents/Resources"
+cp "$BIN_DIR/MacTools" "$PROBE_DIR/Contents/MacOS/MacTools"
+cp Resources/Info.plist "$PROBE_DIR/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.local.MacTools.DesktopProbe' "$PROBE_DIR/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleName Mac Tools Desktop Test' "$PROBE_DIR/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName Mac Tools Desktop Test' "$PROBE_DIR/Contents/Info.plist"
+codesign --force --sign - "$PROBE_DIR"
+codesign --verify --deep --strict "$PROBE_DIR"
+echo "$PROBE_DIR"

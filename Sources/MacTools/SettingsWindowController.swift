@@ -4,14 +4,16 @@ import SwiftUI
 
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    init(hotKeyManager: HotKeyManager, launchAtLoginManager: LaunchAtLoginManager, workspaceSettings: WorkspaceSettings) {
+    init(hotKeyManager: HotKeyManager, launchAtLoginManager: LaunchAtLoginManager, workspaceSettings: WorkspaceSettings,
+         overviewMonitor: DockOverviewMonitor) {
         let rootView = StickiesSettingsView(
             hotKeyManager: hotKeyManager,
             launchAtLoginManager: launchAtLoginManager,
-            workspaceSettings: workspaceSettings
+            workspaceSettings: workspaceSettings,
+            overviewMonitor: overviewMonitor
         )
         let window = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 500, height: 470),
+            contentRect: CGRect(x: 0, y: 0, width: 500, height: 700),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -42,9 +44,30 @@ struct StickiesSettingsView: View {
     @ObservedObject var hotKeyManager: HotKeyManager
     @ObservedObject var launchAtLoginManager: LaunchAtLoginManager
     @ObservedObject var workspaceSettings: WorkspaceSettings
+    @ObservedObject var overviewMonitor: DockOverviewMonitor
 
     var body: some View {
         Form {
+            Section("Show Desktop") {
+                Text("Keep notes pinned and editable when using Command–F3 or your Show Desktop hot corner.")
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Requires Accessibility access to observe Dock’s desktop modes. These undocumented notifications may change with macOS updates.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Enable Accessibility…") { overviewMonitor.requestPermission() }
+                    Button("Recheck") { overviewMonitor.retry() }
+                }
+                Text(overviewMonitor.status)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("After each launch, enter and exit Show Desktop once to synchronize. Notes may briefly appear while Mission Control opens; this is a known limitation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Section("Workspaces") {
                 Picker("Show notes", selection: workspaceBinding) {
                     ForEach(NoteWorkspaceMode.allCases) { mode in
@@ -109,7 +132,7 @@ struct StickiesSettingsView: View {
         }
         .formStyle(.grouped)
         .padding(8)
-        .frame(width: 500, height: 470)
+        .frame(width: 500, height: 700)
     }
 
     private var workspaceBinding: Binding<NoteWorkspaceMode> {
