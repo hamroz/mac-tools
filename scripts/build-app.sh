@@ -25,5 +25,5 @@ mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 cp "$BIN_DIR/MacTools" "$CONTENTS_DIR/MacOS/MacTools"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 
-codesign --force --deep --sign - "$APP_DIR"
+"$SCRIPT_DIR/sign-app.sh" "$APP_DIR"
 echo "$APP_DIR"

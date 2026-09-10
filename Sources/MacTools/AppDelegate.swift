@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var registry: ToolRegistry?
     private var desktopProbe: DesktopProbe?
+    private var organizerModule: MenuBarOrganizerModule?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -19,8 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let repository = StickyNoteRepository()
-        let module = DesktopStickiesModule(repository: repository)
-        let registry = ToolRegistry(modules: [module])
+        let stickies = DesktopStickiesModule(repository: repository)
+        let organizer = MenuBarOrganizerModule()
+        organizerModule = organizer
+        let registry = ToolRegistry(modules: [stickies, organizer])
         self.registry = registry
 
         configureStatusItem(for: registry)
@@ -58,6 +61,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configureEditingMenu() {
         let mainMenu = NSMenu()
         let appMenu = NSMenu()
+        if organizerModule != nil {
+            let organizer = NSMenuItem(title: "Menu Bar Organizer…", action: #selector(showOrganizer), keyEquivalent: ",")
+            organizer.target = self
+            appMenu.addItem(organizer)
+            let tray = NSMenuItem(title: "Hidden Menu Bar Items", action: #selector(showHiddenMenuItems), keyEquivalent: "m")
+            tray.keyEquivalentModifierMask = [.command, .option]
+            tray.target = self
+            appMenu.addItem(tray)
+            appMenu.addItem(.separator())
+        }
         appMenu.addItem(withTitle: "Quit Mac Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let appItem = NSMenuItem()
         appItem.submenu = appMenu
@@ -79,4 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func quit() {
         NSApp.terminate(nil)
     }
+
+    @objc private func showOrganizer() { organizerModule?.showSettings() }
+    @objc private func showHiddenMenuItems() { organizerModule?.showHiddenItems() }
 }

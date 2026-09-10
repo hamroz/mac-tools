@@ -1,6 +1,6 @@
 # Mac Tools
 
-Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. Its first bundled tool is **Desktop Stickies**.
+Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. It currently bundles **Desktop Stickies** and the **Menu Bar Organizer**.
 
 ## Desktop Stickies
 
@@ -11,6 +11,14 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 - New notes default to graphite. Drag the top strip to reposition a note; the area below it is for editing text. The grip, color menu, and close button appear only while hovering that note. Only the bottom-right resize indicator stays visible when the pointer leaves. All palettes use a solid rounded surface without a contrasting border.
 - Moves closed notes to Recently Deleted; expired notes are removed at launch, hourly while running, and when opening the manager.
 - Stores data only in `~/Library/Application Support/Mac Tools/notes.json`.
+
+## Menu Bar Organizer
+
+- Hidden icons live in a horizontal tray below the chevron. Left-click the chevron to open it; right-click for arrangement and recovery commands.
+- Use **Mac Tools → Menu Bar Organizer → Settings…** to choose Hide/Show or reorder items. **Arrange in Menu Bar…** also supports native Command-dragging across the divider; finish with **Done Arranging**.
+- Hiding and native item interaction require Accessibility. Optional Screen Recording access provides the original menu bar glyphs in the tray; app icons appear otherwise. Icon snapshots stay in memory on this Mac.
+- Only the selected item is temporarily brought back when opened from the tray. Turning the tool off or quitting removes the hiding spacer and restores access.
+- Some system controls have fixed placement. The event routing used for overflow items includes an undocumented macOS field and needs hands-on verification on each supported OS. See [implementation and verification](docs/menu-bar-organizer.md).
 
 ## Build and test
 
@@ -23,7 +31,7 @@ The project requires macOS 14 or newer and the Swift 6 command-line toolchain.
 
 The scripts use the SDK selected by `xcode-select` (your installed Xcode). For a deliberate SDK override, set `MAC_TOOLS_SDKROOT`. A complete Xcode installation supplies the test frameworks. The package also supports `swift test` and `swift build -c release` directly.
 
-The app bundle is written to `.build/app/Mac Tools.app` and ad-hoc signed for local use.
+The app bundle is written to `.build/app/Mac Tools.app` and signed with a persistent local certificate stored in the login Keychain. Rebuilds retain the same app identity. You can set `MAC_TOOLS_SIGNING_IDENTITY` to an existing developer identity instead.
 
 To install it in Applications (quit Mac Tools first):
 
@@ -45,9 +53,11 @@ open "/Applications/Mac Tools.app"
 
 Look for the stacked-squares icon in the menu bar at the top of the screen. Choose **New Note**, or press **Control–Option–N**. Mac Tools intentionally has no Dock icon. Click inside a note to type, drag its top strip to move it, and drag its edges to resize it. Hover over the top-right corner to change color or close the note. **Manage Notes** lets you restore deleted notes. Notes stay behind regular app windows.
 
+To tidy the menu bar, enable **Menu Bar Organizer**, use **Allow Accessibility…** if access is missing, then choose Hide/Show in its Settings window. Left-click the chevron for the hidden icon tray. While Mac Tools is active, **Option–Command–M** also opens the tray and **Command–comma** opens the organizer.
+
 Notes pin automatically: Mission Control is detected from the Dock's own window layout, so notes disappear on the first animation frame while Command–F3 Show Desktop keeps them in place. No special permission is required for this, and there is no per-launch synchronization step.
 
-Optionally, **Settings → Show Desktop → Enable Accessibility…** adds a fallback Dock observer. Allow **Mac Tools** under System Settings → Privacy & Security → Accessibility, press **Recheck**, then enter and exit Show Desktop once to synchronize it. The old **Mac Tools Desktop Test** permission is separate and does not cover this app. The fallback uses undocumented Dock notification names, which may change with macOS updates. Rebuilding an ad-hoc signed app can invalidate its Accessibility approval; if macOS stops recognizing it, remove and re-add the installed `/Applications/Mac Tools.app` entry. Notes keep pinning and hiding in Mission Control even with the fallback off.
+Optionally, **Settings → Show Desktop → Enable Accessibility…** adds a fallback Dock observer. Allow **Mac Tools** under System Settings → Privacy & Security → Accessibility, press **Recheck**, then enter and exit Show Desktop once to synchronize it. The old **Mac Tools Desktop Test** permission is separate and does not cover this app. The fallback uses undocumented Dock notification names, which may change with macOS updates. When moving from the older ad-hoc build to the stable signed build, remove and re-add the installed `/Applications/Mac Tools.app` entry once. Normal rebuilds reuse the same certificate; permission checks on startup are silent. Notes keep pinning and hiding in Mission Control even with the fallback off.
 
 If you cannot find the menu-bar icon, open Mac Tools again while it is already running; this opens Manage Notes.
 
@@ -63,7 +73,7 @@ If a notes file cannot be decoded, Mac Tools makes a uniquely named recovery cop
 
 ## Verification
 
-The test suite covers storage and recovery failures, deletion/restore, expiration, disconnected and resized displays, shortcut presentation and live menu updates, multiple tool registration, and native window levels/flags. Physical multi-monitor changes, Show Desktop, Mission Control, Stage Manager, and login approval still need manual checks on your Mac; unit tests cannot prove those desktop interactions.
+The test suite covers storage and recovery failures, deletion/restore, expiration, disconnected and resized displays, shortcut presentation and live menu updates, multiple tool registration, native window levels/flags, menu bar item identity, organizer selection persistence, hide/reveal position handling, and organizer menu wiring. Live organizer checks on macOS 26.6.2 verified real hiding, Show, reordering, the original-glyph tray, native menu activation, disable/re-enable recovery, and permission persistence across signed rebuilds. See `docs/menu-bar-organizer.md` for the evidence. Physical multi-monitor changes, full-screen transitions, concurrent menu bar managers, and desktop presentation still require separate hands-on checks; unit tests cannot prove those interactions.
 
 For desktop presentation changes, check both workspace modes:
 
@@ -76,5 +86,7 @@ Pinning needs only the window probe, not Accessibility. The synchronized configu
 ## Architecture
 
 `MacToolsCore` owns the persisted model, repository, hot-key presets, and display-independent geometry. The `MacTools` executable owns AppKit windows and SwiftUI views.
+
+The Menu Bar Organizer combines per-app Accessibility discovery with status-window metadata. It groups selected items behind an expanding divider and displays a separate horizontal tray. Window-targeted events handle overflow items, and ScreenCaptureKit optionally supplies their original glyphs. Real movement is checked before saving a Hide/Show choice; polling does not repeatedly drag settled items.
 
 Future tools implement `ToolModule` and register with `ToolRegistry` in `AppDelegate`. Tools are compiled into Mac Tools; v1 intentionally has no dynamic plugin loader, network services, accounts, analytics, or cloud synchronization.
