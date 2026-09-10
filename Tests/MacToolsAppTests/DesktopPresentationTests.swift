@@ -16,13 +16,13 @@ final class DesktopPresentationTests: XCTestCase {
     func test_OnlySynchronizedModesPinAndOverviewModesHide() {
         for mode in NoteWorkspaceMode.allCases {
             for state in [DesktopOverviewState.unavailable, .unknown] {
-                let flags = state.collectionBehavior(for: mode)
+                let flags = mode.collectionBehavior(pinned: state.canPin)
                 XCTAssertTrue(flags.contains(.transient))
                 XCTAssertFalse(flags.contains(.stationary))
                 XCTAssertFalse(state.hidesNotes)
             }
             for state in [DesktopOverviewState.inactive, .desktop, .allWindows, .applicationWindows] {
-                let flags = state.collectionBehavior(for: mode)
+                let flags = mode.collectionBehavior(pinned: state.canPin)
                 XCTAssertTrue(flags.contains(.stationary))
                 XCTAssertFalse(flags.contains(.transient))
                 XCTAssertFalse(flags.contains(.managed))
@@ -108,5 +108,94 @@ final class DesktopPresentationTests: XCTestCase {
         XCTAssertEqual(reloaded.note(id: first.id)?.text, "First saved note")
         XCTAssertEqual(reloaded.note(id: second.id)?.text, "Second saved note")
         XCTAssertEqual(reloaded.activeNotes.count, 2)
+    }
+
+    func test_OverlaySignalPairsMissionControlWindowsButIgnoresShowDesktop() {
+        var signal = DockOverviewWindowSignal()
+        signal.reset(layer18: [], layer20: [1])
+
+        // Show Desktop creates the layer-18 window alone: notes stay visible.
+        XCTAssertFalse(signal.observe(layer18: [2], layer20: [1], tick: 1))
+        XCTAssertFalse(signal.observe(layer18: [2], layer20: [1], tick: 2))
+        // Closing Show Desktop must not leave a candidate behind.
+        XCTAssertFalse(signal.observe(layer18: [], layer20: [1], tick: 3))
+        XCTAssertFalse(signal.observe(layer18: [], layer20: [1, 9], tick: 4))
+
+        // Mission Control adds a new full-screen layer-20 window: hide at once.
+        XCTAssertTrue(signal.observe(layer18: [10], layer20: [1, 11], tick: 5))
+        XCTAssertTrue(signal.observe(layer18: [10], layer20: [1, 11], tick: 6))
+        // Hiding lasts until the layer-18 window is gone.
+        XCTAssertFalse(signal.observe(layer18: [], layer20: [1], tick: 7))
+
+        // A delayed companion still pairs within the window, but not later.
+        XCTAssertFalse(signal.observe(layer18: [20], layer20: [], tick: 8))
+        XCTAssertTrue(signal.observe(layer18: [20], layer20: [21], tick: 10))
+        XCTAssertFalse(signal.observe(layer18: [], layer20: [], tick: 11))
+        XCTAssertFalse(signal.observe(layer18: [30], layer20: [], tick: 12))
+        XCTAssertFalse(signal.observe(layer18: [30], layer20: [31], tick: 20))
+    }
+
+    func test_OverlayHidesNotesBeforeDockNotificationAndRestoresOnExit() throws {
+        _ = NSApplication.shared
+        let suite = "DesktopPresentationTests-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = WorkspaceSettings(defaults: defaults)
+        let presentation = DesktopPresentation()
+        let frame = CGRect(x: 120, y: 140, width: 260, height: 200)
+        let controller = StickyNoteWindowController(
+            note: StickyNoteRecord(text: "Overlay", frame: frame), frame: frame,
+            focusInitially: false, workspaceSettings: settings, desktopPresentation: presentation,
+            onTextChanged: { _, _ in XCTFail("Overlay changes must not edit text") },
+            onPaletteChanged: { _, _ in XCTFail("Overlay changes must not edit colors") },
+            onFrameChanged: { _, _, _ in XCTFail("Overlay changes must not save transient geometry") },
+            onDelete: { _ in XCTFail("Overlay changes must not delete notes") })
+        defer { controller.hide() }
+        let window = try XCTUnwrap(controller.window)
+
+        presentation.update(.desktop)
+        presentation.updateOverlay(hidesNotes: true)
+        XCTAssertTrue(presentation.hidesNotes)
+        XCTAssertEqual(window.alphaValue, 0)
+        XCTAssertTrue(window.ignoresMouseEvents)
+        XCTAssertFalse(window.canBecomeKey)
+        XCTAssertTrue(window.collectionBehavior.contains(.stationary))
+
+        presentation.updateOverlay(hidesNotes: false)
+        XCTAssertFalse(presentation.hidesNotes)
+        XCTAssertEqual(window.alphaValue, 1)
+        XCTAssertFalse(window.ignoresMouseEvents)
+        XCTAssertTrue(window.canBecomeKey)
+        controller.flushTextChange()
+    }
+
+    func test_ProbeReadinessPinsNotesWithoutAccessibility() throws {
+        _ = NSApplication.shared
+        let suite = "DesktopPresentationTests-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = WorkspaceSettings(defaults: defaults)
+        let presentation = DesktopPresentation()
+        let frame = CGRect(x: 120, y: 140, width: 260, height: 200)
+        let controller = StickyNoteWindowController(
+            note: StickyNoteRecord(text: "Probe", frame: frame), frame: frame,
+            focusInitially: false, workspaceSettings: settings, desktopPresentation: presentation,
+            onTextChanged: { _, _ in XCTFail("Probe readiness must not edit text") },
+            onPaletteChanged: { _, _ in XCTFail("Probe readiness must not edit colors") },
+            onFrameChanged: { _, _, _ in XCTFail("Probe readiness must not save geometry") },
+            onDelete: { _ in XCTFail("Probe readiness must not delete notes") })
+        defer { controller.hide() }
+        let window = try XCTUnwrap(controller.window)
+
+        XCTAssertEqual(presentation.state, .unavailable)
+        XCTAssertFalse(presentation.pinsNotes)
+        XCTAssertTrue(window.collectionBehavior.contains(.transient))
+
+        presentation.markProbeReady()
+        XCTAssertTrue(presentation.pinsNotes)
+        XCTAssertTrue(window.collectionBehavior.contains(.stationary))
+        XCTAssertFalse(window.collectionBehavior.contains(.transient))
+        XCTAssertEqual(window.alphaValue, 1)
+        controller.flushTextChange()
     }
 }

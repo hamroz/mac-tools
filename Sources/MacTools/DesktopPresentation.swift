@@ -1,4 +1,3 @@
-import AppKit
 import Combine
 
 enum DesktopOverviewState: String, Sendable {
@@ -16,15 +15,6 @@ enum DesktopOverviewState: String, Sendable {
 
     var canPin: Bool { self != .unavailable && self != .unknown }
     var hidesNotes: Bool { self == .allWindows || self == .applicationWindows }
-
-    func collectionBehavior(for mode: NoteWorkspaceMode) -> NSWindow.CollectionBehavior {
-        var behavior = mode.collectionBehavior
-        if canPin {
-            behavior.remove(.transient)
-            behavior.insert(.stationary)
-        }
-        return behavior
-    }
 }
 
 /// Kept separate from the Dock observer so transitions can be tested without
@@ -33,8 +23,32 @@ enum DesktopOverviewState: String, Sendable {
 final class DesktopPresentation: ObservableObject {
     @Published private(set) var state: DesktopOverviewState = .unavailable
 
+    /// Set by the fast window-overlay probe while Mission Control or App Exposé
+    /// is on screen. It fires on the first animation frame, before the Dock's
+    /// AX notification arrives. Show Desktop leaves it false so notes stay
+    /// visible there.
+    @Published private(set) var overlayHidesNotes = false
+
+    /// True once the window probe has inspected the Dock once. The probe does
+    /// not need Accessibility, so notes pin even when that approval is stale or
+    /// missing; the AX observer then only serves as a fallback hide path.
+    @Published private(set) var probeIsReady = false
+
+    var hidesNotes: Bool { state.hidesNotes || overlayHidesNotes }
+    var pinsNotes: Bool { state.canPin || probeIsReady }
+
     func update(_ state: DesktopOverviewState) {
         guard self.state != state else { return }
         self.state = state
+    }
+
+    func updateOverlay(hidesNotes: Bool) {
+        guard overlayHidesNotes != hidesNotes else { return }
+        overlayHidesNotes = hidesNotes
+    }
+
+    func markProbeReady() {
+        guard !probeIsReady else { return }
+        probeIsReady = true
     }
 }

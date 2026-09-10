@@ -15,6 +15,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     private let hotKeyManager: HotKeyManager
     private let workspaceSettings: WorkspaceSettings
     private let overviewMonitor: DockOverviewMonitor
+    private let overviewProbe: DockOverviewOverlayProbe
     private let launchAtLoginManager = LaunchAtLoginManager()
     private var managerWindow: ManagerWindowController?
     private var settingsWindow: SettingsWindowController?
@@ -27,6 +28,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         self.repository = repository
         let presentation = DesktopPresentation()
         self.overviewMonitor = DockOverviewMonitor(presentation: presentation)
+        self.overviewProbe = DockOverviewOverlayProbe(presentation: presentation)
         self.windowCoordinator = StickyWindowCoordinator(repository: repository, workspaceSettings: workspaceSettings,
                                                         desktopPresentation: presentation)
         self.hotKeyManager = hotKeyManager
@@ -38,6 +40,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
 
     func start() {
         overviewMonitor.start()
+        overviewProbe.start()
         windowCoordinator.restoreActiveNotes()
         hotKeyManager.start()
         maintenanceTask?.cancel()
@@ -60,6 +63,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         maintenanceTask = nil
         hotKeyManager.stop()
         windowCoordinator.flushPendingChanges()
+        overviewProbe.stop()
         overviewMonitor.stop()
     }
 

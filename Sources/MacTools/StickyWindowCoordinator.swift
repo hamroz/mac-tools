@@ -152,6 +152,10 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
     private var presentationObservation: AnyCancellable?
     private var currentWorkspaceMode: NoteWorkspaceMode
     private var overviewState: DesktopOverviewState = .unavailable
+    private var overlayHidesNotes = false
+    private var probeIsReady = false
+    private var hidesNotes: Bool { overviewState.hidesNotes || overlayHidesNotes }
+    private var pinsNotes: Bool { overviewState.canPin || probeIsReady }
 
     init(
         note: StickyNoteRecord,
@@ -211,9 +215,15 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
             self?.currentWorkspaceMode = mode
             self?.applyDesktopPresentation()
         }
-        presentationObservation = desktopPresentation?.$state.sink { [weak self] state in
-            self?.overviewState = state
-            self?.applyDesktopPresentation()
+        presentationObservation = desktopPresentation.map { presentation in
+            presentation.$state
+                .combineLatest(presentation.$overlayHidesNotes, presentation.$probeIsReady)
+                .sink { [weak self] state, overlayHidesNotes, probeIsReady in
+                    self?.overviewState = state
+                    self?.overlayHidesNotes = overlayHidesNotes
+                    self?.probeIsReady = probeIsReady
+                    self?.applyDesktopPresentation()
+                }
         }
     }
 
@@ -223,7 +233,7 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
 
     func show(focus: Bool) {
         guard let window else { return }
-        if focus && !overviewState.hidesNotes {
+        if focus && !hidesNotes {
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
         } else {
@@ -263,21 +273,21 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func saveFrameIfReady() {
-        guard isReadyForFrameUpdates, !overviewState.hidesNotes, let window else { return }
+        guard isReadyForFrameUpdates, !hidesNotes, let window else { return }
         onFrameChanged(noteID, window.frame, StickyWindowCoordinator.displayID(for: window.screen))
     }
 
     private func applyDesktopPresentation() {
         guard let window = window as? StickyNoteWindow else { return }
-        window.collectionBehavior = overviewState.collectionBehavior(for: currentWorkspaceMode)
-        window.suppressedForOverview = overviewState.hidesNotes
-        if overviewState.hidesNotes, window.isKeyWindow {
+        window.collectionBehavior = currentWorkspaceMode.collectionBehavior(pinned: pinsNotes)
+        window.suppressedForOverview = hidesNotes
+        if hidesNotes, window.isKeyWindow {
             window.resignKey()
         }
-        window.ignoresMouseEvents = overviewState.hidesNotes
+        window.ignoresMouseEvents = hidesNotes
         // Do not order out/recreate windows: that risks losing individual-Space
         // placement. Restoring alpha must not activate the app or steal focus.
-        window.alphaValue = overviewState.hidesNotes ? 0 : 1
+        window.alphaValue = hidesNotes ? 0 : 1
     }
 
     private func scheduleTextChange(_ text: String) {

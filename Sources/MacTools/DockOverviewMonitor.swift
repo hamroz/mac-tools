@@ -62,7 +62,7 @@ final class DockOverviewMonitor: ObservableObject {
             disconnect()
             failedPID = nil
             presentation.update(.unavailable)
-            status = "Allow \(appName) in System Settings → Privacy & Security → Accessibility."
+            status = "Accessibility is optional: the window probe already pins notes and hides them in Mission Control. Allow \(appName) in System Settings → Privacy & Security → Accessibility to add a fallback observer."
             return
         }
         guard let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock")
@@ -101,7 +101,7 @@ final class DockOverviewMonitor: ObservableObject {
         dockElement = element
         dockPID = pid
         presentation.update(.unknown)
-        status = "Connected. Enter and exit Show Desktop once to synchronize; then test again."
+        status = "Connected (fallback observer). One Show Desktop cycle synchronizes it; the window probe already handles pinning."
         // The C callback executes on this run loop; it can safely enter MainActor.
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(newObserver), .commonModes)
     }

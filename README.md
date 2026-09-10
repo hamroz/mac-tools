@@ -45,9 +45,9 @@ open "/Applications/Mac Tools.app"
 
 Look for the stacked-squares icon in the menu bar at the top of the screen. Choose **New Note**, or press **Control–Option–N**. Mac Tools intentionally has no Dock icon. Click inside a note to type, drag its top strip to move it, and drag its edges to resize it. Hover over the top-right corner to change color or close the note. **Manage Notes** lets you restore deleted notes. Notes stay behind regular app windows.
 
-On first launch, Settings opens with **Show Desktop → Enable Accessibility…**. Allow **Mac Tools** under System Settings → Privacy & Security → Accessibility. The old **Mac Tools Desktop Test** permission is separate and does not cover this app. After approval, press **Recheck**, then enter and exit Show Desktop once. Repeat this synchronization after each app launch or Dock restart. Notes then stay pinned and editable during Show Desktop. The brief flash while entering Mission Control remains a known limitation accepted for this local build.
+Notes pin automatically: Mission Control is detected from the Dock's own window layout, so notes disappear on the first animation frame while Command–F3 Show Desktop keeps them in place. No special permission is required for this, and there is no per-launch synchronization step.
 
-Without permission or before synchronization, the app uses its original behavior: notes remain editable but slide away during Show Desktop. The observer uses undocumented Dock notification names, which may change with macOS updates. Rebuilding an ad-hoc signed app can invalidate its Accessibility approval; if macOS stops recognizing it, remove and re-add the installed `/Applications/Mac Tools.app` entry. Do not rebuild after granting access unless you intend to update the app.
+Optionally, **Settings → Show Desktop → Enable Accessibility…** adds a fallback Dock observer. Allow **Mac Tools** under System Settings → Privacy & Security → Accessibility, press **Recheck**, then enter and exit Show Desktop once to synchronize it. The old **Mac Tools Desktop Test** permission is separate and does not cover this app. The fallback uses undocumented Dock notification names, which may change with macOS updates. Rebuilding an ad-hoc signed app can invalidate its Accessibility approval; if macOS stops recognizing it, remove and re-add the installed `/Applications/Mac Tools.app` entry. Notes keep pinning and hiding in Mission Control even with the fallback off.
 
 If you cannot find the menu-bar icon, open Mac Tools again while it is already running; this opens Manage Notes.
 
@@ -67,11 +67,11 @@ The test suite covers storage and recovery failures, deletion/restore, expiratio
 
 For desktop presentation changes, check both workspace modes:
 
-- **Show Desktop** (Command–F3 or a configured hot corner): after permission and synchronization, notes remain editable at the saved position.
-- **Mission Control** (three-finger swipe up): notes hide after the Dock notification arrives. A brief entry flash remains unresolved.
+- **Show Desktop** (Command–F3 or a configured hot corner): notes remain editable at the saved position.
+- **Mission Control** (three-finger swipe up): notes disappear on the first animation frame.
 - Return to the desktop and verify typing, dragging, resizing, and normal windows covering the notes.
 
-The synchronized configuration uses desktop-icon level + 1 with `stationary`, plus Dock mode observation to hide notes and disable input during Mission Control. The user verified the core interaction in the isolated test and explicitly requested promotion with the remaining flash on 2026-09-10. Unsynchronized/permission-failure fallback is `transient`. Two earlier approaches were rejected: wallpaper level + 1 with `stationary` prevented hover/editing; the exact desktop-icon level with `stationary` also prevented editing and showed notes in Mission Control. Do not ship either combination again. Unit tests cannot prove desktop interaction or timing. See `docs/show-desktop-prototype.md` for the evidence and outstanding checks.
+Pinning needs only the window probe, not Accessibility. The synchronized configuration uses desktop-icon level + 1 with `stationary`, plus two Mission Control signals: a probe of the Dock's own windows (30 Hz) and, when allowed, the AX mode observer as fallback. The probe hides notes when a full-screen Dock layer-18 window appears together with a new full-screen layer-20 window; Show Desktop creates the layer-18 window without that companion, so notes stay visible. A live trace on 2026-09-10 confirmed the signature, and the probe hides notes roughly 30 ms after the pair appears and restores them roughly 30 ms after it disappears. The AX observer still hides notes if the probe sees no matching transition. Two earlier approaches were rejected: wallpaper level + 1 with `stationary` prevented hover/editing; the exact desktop-icon level with `stationary` also prevented editing and showed notes in Mission Control. Do not ship either combination again. Unit tests cannot prove desktop interaction or timing. See `docs/show-desktop-prototype.md` for the evidence and outstanding checks.
 
 ## Architecture
 

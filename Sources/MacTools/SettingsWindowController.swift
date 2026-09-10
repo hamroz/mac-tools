@@ -51,7 +51,7 @@ struct StickiesSettingsView: View {
             Section("Show Desktop") {
                 Text("Keep notes pinned and editable when using Command–F3 or your Show Desktop hot corner.")
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Requires Accessibility access to observe Dock’s desktop modes. These undocumented notifications may change with macOS updates.")
+                Text("Mission Control is detected from the Dock’s own windows, so notes disappear on the first animation frame. Accessibility access is optional and adds a fallback Dock observer; its undocumented notifications may change with macOS updates.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -62,7 +62,7 @@ struct StickiesSettingsView: View {
                 Text(overviewMonitor.status)
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("After each launch, enter and exit Show Desktop once to synchronize. Notes may briefly appear while Mission Control opens; this is a known limitation.")
+                Text("No per-launch synchronization is required for pinning. The fallback observer synchronizes after one Show Desktop cycle.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

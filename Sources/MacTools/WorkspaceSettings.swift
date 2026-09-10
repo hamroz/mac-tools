@@ -32,6 +32,18 @@ enum NoteWorkspaceMode: String, CaseIterable, Identifiable {
         if self == .allWorkspaces { behavior.insert(.canJoinAllSpaces) }
         return behavior
     }
+
+    /// `stationary` keeps notes visible and editable during Show Desktop, so it
+    /// is used as soon as either the window probe or the Dock observer is
+    /// available to hide them during Mission Control.
+    func collectionBehavior(pinned: Bool) -> NSWindow.CollectionBehavior {
+        var behavior = collectionBehavior
+        if pinned {
+            behavior.remove(.transient)
+            behavior.insert(.stationary)
+        }
+        return behavior
+    }
 }
 
 @MainActor
