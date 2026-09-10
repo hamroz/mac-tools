@@ -13,6 +13,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     private let repository: StickyNoteRepository
     private let windowCoordinator: StickyWindowCoordinator
     private let hotKeyManager: HotKeyManager
+    private let workspaceSettings: WorkspaceSettings
     private let launchAtLoginManager = LaunchAtLoginManager()
     private var managerWindow: ManagerWindowController?
     private var settingsWindow: SettingsWindowController?
@@ -20,8 +21,10 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     private var maintenanceTask: Task<Void, Never>?
 
     init(repository: StickyNoteRepository, hotKeyManager: HotKeyManager = HotKeyManager()) {
+        let workspaceSettings = WorkspaceSettings()
+        self.workspaceSettings = workspaceSettings
         self.repository = repository
-        self.windowCoordinator = StickyWindowCoordinator(repository: repository)
+        self.windowCoordinator = StickyWindowCoordinator(repository: repository, workspaceSettings: workspaceSettings)
         self.hotKeyManager = hotKeyManager
         super.init()
         hotKeyManager.onPressed = { [weak self] in
@@ -74,6 +77,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
             managerWindow = ManagerWindowController(
                 repository: repository,
                 hotKeyManager: hotKeyManager,
+                showSettings: { [weak self] in self?.showSettings() },
                 openNote: { [weak self] id in self?.windowCoordinator.focus(noteID: id) },
                 createNote: { [weak self] in self?.createNote() },
                 deleteNote: { [weak self] id in self?.windowCoordinator.moveToRecentlyDeleted(noteID: id) },
@@ -88,7 +92,8 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         if settingsWindow == nil {
             settingsWindow = SettingsWindowController(
                 hotKeyManager: hotKeyManager,
-                launchAtLoginManager: launchAtLoginManager
+                launchAtLoginManager: launchAtLoginManager,
+                workspaceSettings: workspaceSettings
             )
         }
         settingsWindow?.show()

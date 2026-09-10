@@ -7,6 +7,7 @@ final class ManagerWindowController: NSWindowController {
     init(
         repository: StickyNoteRepository,
         hotKeyManager: HotKeyManager,
+        showSettings: @escaping () -> Void,
         openNote: @escaping (UUID) -> Void,
         createNote: @escaping () -> Void,
         deleteNote: @escaping (UUID) -> Void,
@@ -16,6 +17,7 @@ final class ManagerWindowController: NSWindowController {
         let rootView = NotesManagerView(
             repository: repository,
             hotKeyManager: hotKeyManager,
+            showSettings: showSettings,
             openNote: openNote,
             createNote: createNote,
             deleteNote: deleteNote,
@@ -56,6 +58,7 @@ private enum ManagerSection: String, CaseIterable, Identifiable {
 private struct NotesManagerView: View {
     @ObservedObject var repository: StickyNoteRepository
     @ObservedObject var hotKeyManager: HotKeyManager
+    let showSettings: () -> Void
     let openNote: (UUID) -> Void
     let createNote: () -> Void
     let deleteNote: (UUID) -> Void
@@ -132,6 +135,13 @@ private struct NotesManagerView: View {
             .frame(maxWidth: 330)
 
             Spacer()
+
+            Button(action: showSettings) {
+                Image(systemName: "gearshape")
+            }
+            .help("Settings")
+            .accessibilityLabel("Settings")
+            .keyboardShortcut(",", modifiers: .command)
 
             Button(action: createNote) {
                 Label("New Note", systemImage: "plus")

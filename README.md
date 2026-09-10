@@ -51,7 +51,9 @@ After future code changes, quit Mac Tools from its menu and run the same command
 
 ## Desktop behavior and recovery
 
-Notes appear in one Space at a time. Exact Space assignments cannot be saved through public macOS APIs; after relaunch notes return to their saved displays in the active Space. Display changes and wake events recheck placement. A missing monitor moves its notes onto the primary display.
+By default, the same notes appear on **all desktop workspaces (Spaces)** on their chosen display; edits are shared because each is still a single note. Open **Settings → Workspaces** (also accessible using the gear in Manage Notes) to choose **One workspace per note** instead. The preference is saved and updates existing notes immediately. In either mode, notes stay behind ordinary app windows, are hidden in Mission Control, and do not join other apps' full-screen windows.
+
+In individual-workspace mode, new notes belong to the workspace where they are created. Exact Space assignments cannot be saved through public macOS APIs; after relaunch notes return to their saved displays in the active Space. Switching from all workspaces to individual workspaces lets macOS assign each existing window to one Space; use Manage Notes to locate it. Display changes and wake events recheck placement. A missing monitor moves its notes onto the primary display.
 
 If a notes file cannot be decoded, Mac Tools makes a uniquely named recovery copy alongside it before permitting new saves. If the copy fails, it leaves the original untouched and keeps edits in memory. Keep the app open, resolve the storage problem, and use **Try Saving Again** in Manage Notes. Never treat in-memory changes as saved when that warning is present.
 

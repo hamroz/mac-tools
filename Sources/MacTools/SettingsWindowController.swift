@@ -4,13 +4,14 @@ import SwiftUI
 
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    init(hotKeyManager: HotKeyManager, launchAtLoginManager: LaunchAtLoginManager) {
+    init(hotKeyManager: HotKeyManager, launchAtLoginManager: LaunchAtLoginManager, workspaceSettings: WorkspaceSettings) {
         let rootView = StickiesSettingsView(
             hotKeyManager: hotKeyManager,
-            launchAtLoginManager: launchAtLoginManager
+            launchAtLoginManager: launchAtLoginManager,
+            workspaceSettings: workspaceSettings
         )
         let window = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 480, height: 300),
+            contentRect: CGRect(x: 0, y: 0, width: 500, height: 470),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -40,9 +41,26 @@ final class SettingsWindowController: NSWindowController {
 struct StickiesSettingsView: View {
     @ObservedObject var hotKeyManager: HotKeyManager
     @ObservedObject var launchAtLoginManager: LaunchAtLoginManager
+    @ObservedObject var workspaceSettings: WorkspaceSettings
 
     var body: some View {
         Form {
+            Section("Workspaces") {
+                Picker("Show notes", selection: workspaceBinding) {
+                    ForEach(NoteWorkspaceMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+
+                Text(workspaceSettings.mode.explanation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Applies to all existing and new notes. Notes are hidden in Mission Control in either mode.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Desktop Stickies") {
                 LabeledContent("New Note shortcut") {
                     Picker("Shortcut", selection: hotKeyBinding) {
@@ -91,7 +109,11 @@ struct StickiesSettingsView: View {
         }
         .formStyle(.grouped)
         .padding(8)
-        .frame(width: 480, height: 300)
+        .frame(width: 500, height: 470)
+    }
+
+    private var workspaceBinding: Binding<NoteWorkspaceMode> {
+        Binding(get: { workspaceSettings.mode }, set: { workspaceSettings.setMode($0) })
     }
 
     private var hotKeyBinding: Binding<HotKeyPreset> {

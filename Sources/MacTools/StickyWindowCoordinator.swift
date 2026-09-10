@@ -1,14 +1,17 @@
 import AppKit
+import Combine
 import MacToolsCore
 import SwiftUI
 
 @MainActor
 final class StickyWindowCoordinator: NSObject {
     private let repository: StickyNoteRepository
+    private let workspaceSettings: WorkspaceSettings
     private var controllers: [UUID: StickyNoteWindowController] = [:]
 
-    init(repository: StickyNoteRepository) {
+    init(repository: StickyNoteRepository, workspaceSettings: WorkspaceSettings = WorkspaceSettings()) {
         self.repository = repository
+        self.workspaceSettings = workspaceSettings
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(reconcileDisplays), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reconcileDisplays), name: NSWorkspace.didWakeNotification, object: nil)
@@ -101,6 +104,7 @@ final class StickyWindowCoordinator: NSObject {
             note: adjustedNote,
             frame: adjustedFrame,
             focusInitially: focus,
+            workspaceSettings: workspaceSettings,
             onTextChanged: { [weak self] id, text in self?.repository.updateText(id: id, text: text) },
             onPaletteChanged: { [weak self] id, palette in self?.repository.updatePalette(id: id, palette: palette) },
             onFrameChanged: { [weak self] id, frame, displayID in
@@ -139,11 +143,13 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
     private var pendingText: String?
     private var textSaveTask: Task<Void, Never>?
     private var isReadyForFrameUpdates = false
+    private var workspaceObservation: AnyCancellable?
 
     init(
         note: StickyNoteRecord,
         frame: CGRect,
         focusInitially: Bool,
+        workspaceSettings: WorkspaceSettings = WorkspaceSettings(),
         onTextChanged: @escaping (UUID, String) -> Void,
         onPaletteChanged: @escaping (UUID, NotePalette) -> Void,
         onFrameChanged: @escaping (UUID, CGRect, UInt32?) -> Void,
@@ -168,7 +174,7 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
         window.minSize = NoteGeometry.minimumSize
         window.maxSize = NoteGeometry.maximumSize
         window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
-        window.collectionBehavior = [.stationary, .fullScreenNone, .ignoresCycle]
+        window.collectionBehavior = workspaceSettings.mode.collectionBehavior
         window.animationBehavior = .utilityWindow
 
         super.init(window: window)
@@ -188,6 +194,9 @@ final class StickyNoteWindowController: NSWindowController, NSWindowDelegate {
         window.setFrame(frame, display: false)
         window.delegate = self
         isReadyForFrameUpdates = true
+        workspaceObservation = workspaceSettings.$mode.sink { [weak window] mode in
+            window?.collectionBehavior = mode.collectionBehavior
+        }
     }
 
     required init?(coder: NSCoder) {
