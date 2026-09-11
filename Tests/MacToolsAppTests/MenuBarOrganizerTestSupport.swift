@@ -9,10 +9,25 @@ final class FakeMenuBarSection: MenuBarSectionControlling {
     var isCollapsed = false
     var installed = false
     var collapseAllowed = true
+    var collapseHistory: [Bool] = []
     func install() { installed = true }
     func repairPlacement() async throws { }
-    func setCollapsed(_ collapsed: Bool) { isCollapsed = collapsed && collapseAllowed }
+    func setCollapsed(_ collapsed: Bool) { collapseHistory.append(collapsed); isCollapsed = collapsed && collapseAllowed }
     func remove() { installed = false; isCollapsed = false }
+}
+
+@MainActor
+final class FakeMenuBarRecovery: MenuBarItemRecovering {
+    var restored: [MenuBarRecoveryItem] = []
+    var onRestore: (() -> Void)?
+    var failure: Error?
+    func restore(_ item: MenuBarRecoveryItem) async throws -> String {
+        restored.append(item)
+        if let failure { throw failure }
+        onRestore?()
+        return "Enabled"
+    }
+    func openSettings() { }
 }
 
 @MainActor

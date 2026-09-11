@@ -16,6 +16,7 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 
 - Hidden icons live in a horizontal tray below the chevron. Left-click the chevron to open it; right-click for arrangement and recovery commands.
 - Use **Mac Tools → Menu Bar Organizer → Settings…** to choose Hide/Show or reorder items. **Arrange in Menu Bar…** also supports native Command-dragging across the divider; finish with **Done Arranging**.
+- **Missing or Removed → Restore** brings back icons disabled by macOS's Remove command. Icons are remembered across restarts, together with their Hide/Show choice. Restoring Sound or Now Playing selects Always Show in macOS Menu Bar settings. If an app disables its own icon, you may also need to enable it in that app's settings.
 - Hiding and native item interaction require Accessibility. Optional Screen Recording access provides the original menu bar glyphs in the tray; app icons appear otherwise. Icon snapshots stay in memory on this Mac.
 - Only the selected item is temporarily brought back when opened from the tray. Turning the tool off or quitting removes the hiding spacer and restores access.
 - Some system controls have fixed placement. The event routing used for overflow items includes an undocumented macOS field and needs hands-on verification on each supported OS. See [implementation and verification](docs/menu-bar-organizer.md).

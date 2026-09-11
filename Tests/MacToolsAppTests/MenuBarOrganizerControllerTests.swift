@@ -342,6 +342,8 @@ final class MenuBarOrganizerControllerTests: XCTestCase {
         controller.revealAll()
         await waitUntil { controller.isRevealed }
         await waitUntil { section.isCollapsed && !controller.isBusy }
+        controller.revealAll()
+        await waitUntil { !controller.isBusy && !section.isCollapsed }
         section.collapseAllowed = false
         controller.hideNow()
         await waitUntil { !controller.isBusy }

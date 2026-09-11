@@ -70,6 +70,9 @@ struct MenuBarOrganizerSettingsView: View {
                             .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                if let message = controller.recoveryMessage {
+                    Section { Text(message).foregroundStyle(.secondary) }
+                }
                 if controller.isArranging {
                     Section("Arrange directly in the menu bar") {
                         Text("Hold ⌘ and drag icons into your preferred order. Items left of │ will be hidden; items right of │ stay visible. Keep the chevron to the right of │.")
@@ -80,9 +83,28 @@ struct MenuBarOrganizerSettingsView: View {
                 if controller.isTrusted {
                     itemSection("Always Visible", hidden: false)
                     itemSection("Hidden in Dropdown", hidden: true)
+                    Section("Missing or Removed") {
+                        Text("Restore re-enables icons removed in macOS, keeping their saved Hide/Show choices. If an app hides its own icon, you may also need to enable it in that app's settings.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        ForEach(controller.missingItems) { item in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.displayName)
+                                    Text("Removed, inactive, or app not running").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Restore") { controller.restoreMissingItem(item) }
+                                    .accessibilityLabel("Restore \(item.displayName)")
+                                    .disabled(controller.isBusy)
+                            }
+                        }
+                        Text("For controls such as Sound and Now Playing, Restore selects Always Show. You can change that in macOS settings.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Open macOS Menu Bar Settings…") { controller.openMenuBarSettings() }
+                    }
                 }
                 Section {
-                    Text("Turning the organizer off or quitting Mac Tools brings all items back. macOS controls the placement of some system icons.")
+                    Text("Turning the organizer off or quitting Mac Tools returns hidden icons to the menu bar. Removed icons need Restore. macOS controls the placement of some system icons.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Choices are remembered for apps whose menu bar icons are currently unavailable.")
                         .font(.caption).foregroundStyle(.secondary)

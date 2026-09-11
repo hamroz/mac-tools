@@ -9,6 +9,7 @@ final class MenuBarOrganizerController: ObservableObject {
     @Published private(set) var isArranging = false
     @Published private(set) var isBusy = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var recoveryMessage: String?
 
     var pressDelay: Duration = .milliseconds(250)
     var layoutDelay: Duration = .milliseconds(250)
@@ -18,6 +19,7 @@ final class MenuBarOrganizerController: ObservableObject {
 
     private let scanner: any MenuBarItemScanning
     private let settings: MenuBarOrganizerSettings
+    private let recovery: any MenuBarItemRecovering
     let section: any MenuBarSectionControlling
     private var reconciled: [MenuBarItemKey: String] = [:]
     private var temporarilyVisible: Set<MenuBarItemKey> = []
@@ -30,14 +32,63 @@ final class MenuBarOrganizerController: ObservableObject {
     private var diagnosticsWindow: NSWindow?
 
     init(scanner: any MenuBarItemScanning, settings: MenuBarOrganizerSettings,
-         section: any MenuBarSectionControlling = MenuBarSection()) {
+         section: any MenuBarSectionControlling = MenuBarSection(),
+         recovery: any MenuBarItemRecovering = MenuBarItemRecovery()) {
         self.scanner = scanner
         self.settings = settings
         self.section = section
+        self.recovery = recovery
         isTrusted = scanner.isTrusted
     }
 
     var hiddenItems: [MenuBarItemSnapshot] { items.filter { settings.isHidden($0.key) } }
+    var missingItems: [MenuBarRecoveryItem] {
+        let present = Set(items.map { MenuBarRecoveryItem($0).recoveryIdentity })
+        var missing = [String: MenuBarRecoveryItem]()
+        for item in MenuBarRecoveryItem.commonSystemItems + settings.rememberedItems where !present.contains(item.recoveryIdentity) {
+            missing[item.recoveryIdentity] = item
+        }
+        return missing.values.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    func openMenuBarSettings() { recovery.openSettings() }
+
+    func restoreMissingItem(_ item: MenuBarRecoveryItem) {
+        guard !isBusy else { return }
+        recoveryMessage = nil
+        perform { controller in
+            let previousWindows = Set(MenuBarWindowCatalog.items().map(\.id))
+            let message: String
+            do { message = try await controller.recovery.restore(item) }
+            catch is CancellationError { throw CancellationError() }
+            catch {
+                controller.recoveryMessage = error.localizedDescription
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+            for attempt in 0..<20 {
+                try Task.checkCancellation()
+                controller.scanItems()
+                if attempt == 2, controller.section.isCollapsed, let divider = controller.section.dividerFrame,
+                   !controller.items.contains(where: { MenuBarRecoveryItem($0).recoveryIdentity == item.recoveryIdentity }) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    try await Task.sleep(for: .milliseconds(150))
+                    try await controller.scanner.resolveRestoredItem(item.key, excluding: previousWindows,
+                                                                     at: CGPoint(x: divider.maxX + 2, y: divider.midY))
+                    controller.scanItems()
+                }
+                if let restored = controller.items.first(where: { MenuBarRecoveryItem($0).recoveryIdentity == item.recoveryIdentity }) {
+                    if controller.settings.isEnabled { try await controller.reconcileAndCollapse() }
+                    let destination = controller.settings.isEnabled && controller.settings.isHidden(restored.key) ? "the hidden tray" : "the menu bar"
+                    controller.recoveryMessage = "Restored \(item.displayName) to \(destination)."
+                    NSApp.activate(ignoringOtherApps: true)
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(150))
+            }
+            controller.recoveryMessage = message
+        }
+    }
 
     func start() {
         if settings.isEnabled {
@@ -95,12 +146,14 @@ final class MenuBarOrganizerController: ObservableObject {
             return
         }
         perform { controller in
-            try await controller.expand()
+            try await controller.prepareLayout()
             try await controller.place(key, hidden: hidden)
             try Task.checkCancellation()
             // Commit only after the observed position crosses the divider.
             controller.settings.setHidden(hidden, for: key)
             controller.reconciled[key] = item.instanceID
+            controller.temporarilyVisible.remove(key)
+            controller.returnAnchors.removeValue(forKey: key)
             if !controller.isArranging { try await controller.reconcileAndCollapse() }
         }
     }
@@ -148,11 +201,10 @@ final class MenuBarOrganizerController: ObservableObject {
         guard settings.isEnabled, !isBusy, !isArranging else { return }
         cancelRehide()
         perform { controller in
-            if controller.section.isCollapsed, !controller.temporarilyVisible.isEmpty {
-                for key in controller.temporarilyVisible { try await controller.restoreTemporaryItem(key) }
-                controller.temporarilyVisible.removeAll()
-                controller.returnAnchors.removeAll()
-            } else { try await controller.reconcileAndCollapse() }
+            for key in controller.temporarilyVisible { try await controller.restoreTemporaryItem(key) }
+            controller.temporarilyVisible.removeAll()
+            controller.returnAnchors.removeAll()
+            try await controller.reconcileAndCollapse()
         }
     }
 
@@ -188,7 +240,7 @@ final class MenuBarOrganizerController: ObservableObject {
         guard peers.indices.contains(neighborIndex) else { return }
         let neighborKey = peers[neighborIndex].key
         perform { controller in
-            try await controller.expand()
+            try await controller.prepareLayout()
             guard let neighbor = controller.items.first(where: { $0.key == neighborKey }) else { throw MenuBarOperationError.unavailable }
             let x = earlier ? neighbor.frame.minX - 2 : neighbor.frame.maxX + 2
             try await controller.scanner.move(key, to: CGPoint(x: x, y: neighbor.frame.midY))
@@ -218,7 +270,9 @@ final class MenuBarOrganizerController: ObservableObject {
             if let hit { AXUIElementGetPid(hit, &pid) }
             return "pid=\(window.pid) id=\(window.id) name=\(window.title) bounds=\(NSStringFromRect(window.frame)) hitPID=\(pid) hitResult=\(result.rawValue)"
         }
-        let text = "App: \(Bundle.main.bundleURL.path)\nAccessibility: \(isTrusted)\nDivider: \(section.dividerFrame.map(NSStringFromRect) ?? "NONE") collapsed=\(section.isCollapsed)\nLast activation: \(lastActivation)\n\nITEMS\n" + rows.joined(separator: "\n") + "\n\nSTATUS WINDOWS\n" + windows.joined(separator: "\n")
+        let reveals = (section as? MenuBarSection).map { String($0.revealTransitions) } ?? "unavailable"
+        let recoveryDetails = ((recovery as? MenuBarItemRecovery)?.lastDiagnostics ?? "unavailable") + "\nWindow recovery: " + ((scanner as? AXMenuBarItemScanner)?.lastRecoveryDiagnostics ?? "unavailable")
+        let text = "App: \(Bundle.main.bundleURL.path)\nAccessibility: \(isTrusted)\nDivider: \(section.dividerFrame.map(NSStringFromRect) ?? "NONE") collapsed=\(section.isCollapsed)\nGroup reveals this launch: \(reveals)\nLast activation: \(lastActivation)\nRecovery: \(recoveryDetails)\n\nITEMS\n" + rows.joined(separator: "\n") + "\n\nSTATUS WINDOWS\n" + windows.joined(separator: "\n")
         if diagnosticsWindow == nil {
             let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 740, height: 550), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             window.title = "Menu Bar Diagnostics"
@@ -246,6 +300,7 @@ final class MenuBarOrganizerController: ObservableObject {
             return
         }
         let scanned = scanner.scan()
+        settings.remember(scanned + scanner.unavailableItems)
         if items.count != scanned.count || !zip(items, scanned).allSatisfy({ $0.hasSamePresentation(as: $1) }) {
             items = scanned
         }
@@ -254,6 +309,16 @@ final class MenuBarOrganizerController: ObservableObject {
         }
         let keys = Set(items.map(\.key))
         reconciled = reconciled.filter { keys.contains($0.key) }
+        temporarilyVisible.formIntersection(keys)
+        returnAnchors = returnAnchors.filter { keys.contains($0.key) }
+    }
+
+    private func prepareLayout() async throws {
+        guard settings.isEnabled, scanner.isTrusted else { throw MenuBarOperationError.permission }
+        if section.isCollapsed {
+            scanItems()
+            guard section.dividerFrame != nil else { throw MenuBarOperationError.layout }
+        } else { try await expand() }
     }
 
     private func expand() async throws {
@@ -282,12 +347,11 @@ final class MenuBarOrganizerController: ObservableObject {
     }
 
     private func reconcileAndCollapse() async throws {
-        try await expand()
-        for key in temporarilyVisible { try await restoreTemporaryItem(key) }
+        try await prepareLayout()
         // Refresh after every move: macOS shifts all neighboring icons when one moves.
         // Inserting left of the divider appends; inserting right prepends.
         // Walk visible items backwards so startup preserves their original order.
-        let movable = items.filter(\.canMove)
+        let movable = items.filter { $0.canMove && !temporarilyVisible.contains($0.key) }
         let keys = movable.filter { settings.isHidden($0.key) }.map(\.key) +
             movable.filter { !settings.isHidden($0.key) }.reversed().map(\.key)
         for key in keys {
@@ -295,15 +359,13 @@ final class MenuBarOrganizerController: ObservableObject {
             try await place(key, hidden: settings.isHidden(key))
             if let item = items.first(where: { $0.key == key }) { reconciled[key] = item.instanceID }
         }
-        temporarilyVisible.removeAll()
-        returnAnchors.removeAll()
         for item in items { reconciled[item.key] = item.instanceID }
         if !hiddenItems.isEmpty {
             await beforeCollapse?(hiddenItems)
             try Task.checkCancellation()
-            section.setCollapsed(true)
+            if !section.isCollapsed { section.setCollapsed(true) }
             guard section.isCollapsed else { throw MenuBarOperationError.layout }
-        }
+        } else { section.setCollapsed(false) }
         isRevealed = false
     }
 
@@ -321,18 +383,20 @@ final class MenuBarOrganizerController: ObservableObject {
             }
             do {
                 try await operation(self)
+                if !self.temporarilyVisible.isEmpty { self.scheduleRehide() }
             } catch is CancellationError {
                 // stop() owns cleanup. A stale task must not alter a later session.
             } catch {
                 guard self.generation == expectedGeneration else { return }
-                self.section.setCollapsed(false)
-                self.isRevealed = true
+                // A failed/removed item must not expose unrelated hidden icons.
+                self.isRevealed = !self.section.isCollapsed
                 self.errorMessage = error.localizedDescription
             }
         }
     }
 
     private func restoreTemporaryItem(_ key: MenuBarItemKey) async throws {
+        guard items.contains(where: { $0.key == key }) else { return }
         if let anchor = returnAnchors[key], settings.isHidden(anchor.key),
            let neighbor = items.first(where: { $0.key == anchor.key }),
            let divider = section.dividerFrame, neighbor.frame.midX < divider.midX {

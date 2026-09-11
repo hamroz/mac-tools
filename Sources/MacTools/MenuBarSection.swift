@@ -17,6 +17,7 @@ final class MenuBarSection: MenuBarSectionControlling {
     private var statusItem: NSStatusItem?
     var accessButtonFrame: (() -> CGRect?)?
     private(set) var isCollapsed = false
+    private(set) var revealTransitions = 0
     private let autosaveName = "MacTools.Organizer.Divider"
 
     static func prepareSavedPositions(defaults: UserDefaults = .standard) {
@@ -65,6 +66,7 @@ final class MenuBarSection: MenuBarSectionControlling {
 
     func setCollapsed(_ collapsed: Bool) {
         guard let item = statusItem else { return }
+        if isCollapsed && !collapsed { revealTransitions += 1 }
         if collapsed {
             guard let divider = dividerFrame, let access = accessButtonFrame?(),
                   divider.maxX <= access.minX + 2 else { return }

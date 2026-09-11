@@ -45,17 +45,26 @@ enum MenuBarOperationError: LocalizedError {
 protocol MenuBarItemScanning: AnyObject {
     var isTrusted: Bool { get }
     var isInteracting: Bool { get }
+    var unavailableItems: [MenuBarItemSnapshot] { get }
     func requestAccess()
     func openPrivacySettings()
     func scan() -> [MenuBarItemSnapshot]
     func move(_ key: MenuBarItemKey, to position: CGPoint) async throws
     func press(_ key: MenuBarItemKey) async throws
+    func resolveRestoredItem(_ key: MenuBarItemKey, excluding previousWindows: Set<CGWindowID>, at position: CGPoint) async throws
+}
+
+extension MenuBarItemScanning {
+    var unavailableItems: [MenuBarItemSnapshot] { [] }
+    func resolveRestoredItem(_ key: MenuBarItemKey, excluding previousWindows: Set<CGWindowID>, at position: CGPoint) async throws { }
 }
 
 @MainActor
 final class AXMenuBarItemScanner: MenuBarItemScanning {
+    private(set) var lastRecoveryDiagnostics = "None"
     private var elements: [MenuBarItemKey: AXUIElement] = [:]
     private var cached: [MenuBarItemKey: MenuBarItemSnapshot] = [:]
+    var unavailableItems: [MenuBarItemSnapshot] { cached.values.filter { $0.windowID == nil } }
 
     var isTrusted: Bool { AXIsProcessTrusted() }
     var isInteracting: Bool {
@@ -115,7 +124,10 @@ final class AXMenuBarItemScanner: MenuBarItemScanning {
             guard let barValue = value(app, kAXExtrasMenuBarAttribute),
                   CFGetTypeID(barValue) == AXUIElementGetTypeID() else { continue }
             let bar = unsafeDowncast(barValue, to: AXUIElement.self)
-            let children = value(bar, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            let children = (value(bar, kAXChildrenAttribute) as? [AXUIElement] ?? []).filter {
+                value($0, kAXRoleAttribute) as? String == kAXMenuBarItemRole &&
+                frame(of: $0).map { $0.width > 0 && $0.height > 0 } == true
+            }
             var counts: [String: Int] = [:]
             for child in children {
                 guard value(child, kAXRoleAttribute) as? String == kAXMenuBarItemRole,
@@ -136,7 +148,7 @@ final class AXMenuBarItemScanner: MenuBarItemScanning {
                 } && owner.hasPrefix("com.apple.")
                 let previousWindow = cached[key]?.windowID.flatMap { windowsByID[$0] }
                 let hits = hitWindows.filter { $0.1 == application.processIdentifier }
-                let hitWindow = hits.first { CFEqual($0.0, child) }?.2 ?? (children.count == 1 && hits.count == 1 ? hits.first?.2 : nil)
+                let hitWindow = hits.first { isDescendant($0.0, of: child) }?.2 ?? (children.count == 1 && hits.count == 1 ? hits.first?.2 : nil)
                 let window = previousWindow.flatMap { $0.pid == cached[key]?.hostProcessIdentifier ? $0 : nil }
                     ?? hitWindow
                     ?? MenuBarWindowCatalog.match(pid: application.processIdentifier, frame: frame, in: windows)
@@ -172,6 +184,67 @@ final class AXMenuBarItemScanner: MenuBarItemScanning {
             throw MenuBarOperationError.unavailable
         }
         try await MenuBarEventDriver.click(windowID: windowID, pid: item.hostProcessIdentifier, frame: item.frame)
+    }
+
+    /// macOS may recreate a restored icon straight into overflow. Briefly move
+    /// only the unique newly created window into view to obtain actual AX owner
+    /// evidence; never assign a hosted window based on proximity alone.
+    func resolveRestoredItem(_ key: MenuBarItemKey, excluding previousWindows: Set<CGWindowID>, at position: CGPoint) async throws {
+        guard isTrusted else { throw MenuBarOperationError.permission }
+        _ = scan()
+        guard let source = cached[key], source.windowID == nil else { return }
+        let windows = MenuBarWindowCatalog.items()
+        let known = Set(cached.values.compactMap(\.windowID))
+        guard let candidate = MenuBarWindowCatalog.recoveryCandidate(in: windows, excluding: previousWindows.union(known)) else { return }
+        lastRecoveryDiagnostics = "\(key.rawValue): candidate=\(candidate.id) original=\(NSStringFromRect(candidate.frame)) sourcePID=\(source.processIdentifier)"
+        // Preserve its original neighbor so a failed identification can roll back.
+        let neighbor = windows.filter { $0.id != candidate.id && $0.frame.minX >= candidate.frame.maxX - 1 && abs($0.frame.midY - candidate.frame.midY) < 2 }
+            .min { $0.frame.minX < $1.frame.minX }
+        try await MenuBarEventDriver.move(windowID: candidate.id, pid: candidate.pid, from: candidate.frame, to: position)
+        var resolved: MenuBarItemSnapshot?
+        for _ in 0..<10 {
+            try await Task.sleep(for: .milliseconds(150))
+            resolved = scan().first { $0.key == key && $0.windowID == candidate.id && $0.processIdentifier == source.processIdentifier }
+            if resolved != nil { break }
+        }
+        if let moved = MenuBarWindowCatalog.items().first(where: { $0.id == candidate.id }) {
+            var hit: AXUIElement?
+            let result = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(moved.frame.midX), Float(moved.frame.midY), &hit)
+            var pid: pid_t = 0
+            if let hit { AXUIElementGetPid(hit, &pid) }
+            // The source extras bar can keep a stale proxy after OS removal.
+            // A successful hit on the recreated window is direct owner evidence.
+            // Bind only when this process exposes exactly one source item.
+            if resolved == nil, result == .success, pid == source.processIdentifier,
+               cached.values.filter({ $0.processIdentifier == pid }).count == 1 {
+                var identified = source
+                identified.windowID = moved.id
+                identified.hostProcessIdentifier = moved.pid
+                identified.position = moved.frame.origin
+                identified.size = moved.frame.size
+                cached[key] = identified
+                resolved = identified
+            }
+            lastRecoveryDiagnostics += " moved=\(NSStringFromRect(moved.frame)) hit=\(result.rawValue) pid=\(pid) resolved=\(resolved != nil)\n" + cached.values.filter { $0.processIdentifier == source.processIdentifier }.map { "\($0.id) window=\($0.windowID ?? 0) frame=\(NSStringFromRect($0.frame))" }.joined(separator: "\n")
+        }
+        if let current = MenuBarWindowCatalog.items().first(where: { $0.id == candidate.id }) {
+            let anchor = neighbor.flatMap { saved in MenuBarWindowCatalog.items().first { $0.id == saved.id } }
+            let returnPoint = CGPoint(x: anchor.map { $0.frame.minX - 2 } ?? candidate.frame.midX, y: candidate.frame.midY)
+            try await MenuBarEventDriver.move(windowID: current.id, pid: current.pid, from: current.frame, to: returnPoint)
+            try await Task.sleep(for: .milliseconds(150))
+            _ = scan()
+        }
+        guard resolved != nil else { throw MenuBarOperationError.unavailable }
+    }
+
+    private func isDescendant(_ element: AXUIElement, of ancestor: AXUIElement) -> Bool {
+        var current = element
+        for _ in 0..<8 {
+            if CFEqual(current, ancestor) { return true }
+            guard let parent = value(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return false }
+            current = unsafeDowncast(parent, to: AXUIElement.self)
+        }
+        return false
     }
 
     private func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {

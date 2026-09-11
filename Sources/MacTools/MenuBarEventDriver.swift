@@ -30,6 +30,14 @@ enum MenuBarWindowCatalog {
         return candidates.count == 1 ? candidates[0] : nil
     }
 
+    static func recoveryCandidate(in windows: [MenuBarWindowInfo], excluding known: Set<CGWindowID>) -> MenuBarWindowInfo? {
+        let candidates = windows.filter {
+            !known.contains($0.id) && !$0.title.hasPrefix("MacTools.") && $0.frame.width < 300 &&
+            !MenuBarCoordinates.isVisible($0.frame)
+        }
+        return candidates.count == 1 ? candidates[0] : nil
+    }
+
     private static func distance(_ a: CGRect, _ b: CGRect) -> CGFloat { hypot(a.midX - b.midX, a.midY - b.midY) }
 }
 
