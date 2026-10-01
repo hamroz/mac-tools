@@ -5,7 +5,9 @@ import Foundation
 /// window-list I/O lets the pairing rules be exercised deterministically in
 /// tests, where synthesizing real Dock transitions is not possible.
 struct DockOverviewWindowSignal {
-    private(set) var isMissionControlActive = false
+    var isMissionControlActive: Bool { dockPairIsActive || exposeShieldIsVisible }
+    private var dockPairIsActive = false
+    private var exposeShieldIsVisible = false
     private var seenLayer18: Set<Int> = []
     private var seenLayer20: Set<Int> = []
     private var candidateTick: Int?
@@ -22,19 +24,26 @@ struct DockOverviewWindowSignal {
     mutating func reset(layer18: Set<Int>, layer20: Set<Int>) {
         seenLayer18 = layer18
         seenLayer20 = layer20
-        isMissionControlActive = false
+        dockPairIsActive = false
+        exposeShieldIsVisible = false
         clearCandidate()
     }
 
-    mutating func observe(layer18: Set<Int>, layer20: Set<Int>, tick: Int) -> Bool {
+    /// `exposeShield` holds WindowManager's full-screen layer-19 windows. Since
+    /// macOS 27, WindowManager draws Mission Control and App Exposé behind that
+    /// shield and Show Desktop as a separate layer-18 overlay, so the shield
+    /// alone identifies the overviews that hide notes.
+    mutating func observe(layer18: Set<Int>, layer20: Set<Int>, exposeShield: Set<Int> = [],
+                          tick: Int) -> Bool {
+        exposeShieldIsVisible = !exposeShield.isEmpty
         let appeared18 = layer18.subtracting(seenLayer18)
         let appeared20 = layer20.subtracting(seenLayer20)
         seenLayer18 = layer18
         seenLayer20 = layer20
 
-        if isMissionControlActive {
+        if dockPairIsActive {
             if layer18.isEmpty {
-                isMissionControlActive = false
+                dockPairIsActive = false
                 clearCandidate()
             }
             return isMissionControlActive
@@ -47,7 +56,7 @@ struct DockOverviewWindowSignal {
             if !appeared18.isEmpty { candidateSawLayer18 = true }
             if !appeared20.isEmpty { candidateSawLayer20 = true }
             if candidateSawLayer18, candidateSawLayer20 {
-                isMissionControlActive = true
+                dockPairIsActive = true
                 clearCandidate()
             }
         }
@@ -64,7 +73,9 @@ struct DockOverviewWindowSignal {
 /// Watches the Dock's own full-screen windows so notes can disappear on the
 /// first Mission Control animation frame. Mission Control and App Exposé create
 /// a layer-18 window together with a new layer-20 window; Show Desktop creates
-/// the layer-18 window alone, so notes stay visible there. The AX notifications
+/// the layer-18 window alone, so notes stay visible there. From macOS 27 these
+/// overlays belong to WindowManager instead; see `DockOverviewWindowSignal`.
+/// The AX notifications
 /// that `DockOverviewMonitor` uses arrive only after the animation has started,
 /// which is what caused the visible flash.
 @MainActor
@@ -107,14 +118,18 @@ final class DockOverviewOverlayProbe {
               let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] else {
             return
         }
+        let windowManagerPID = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.apple.WindowManager").first?.processIdentifier
         let overlay = Self.overlayWindows(in: windows, dockPID: pid)
+        let shield = windowManagerPID.map { Self.exposeShieldWindows(in: windows, windowManagerPID: $0) } ?? []
         if dockPID != pid {
             dockPID = pid
             signal.reset(layer18: overlay.layer18, layer20: overlay.layer20)
         }
         presentation.markProbeReady()
         let wasActive = signal.isMissionControlActive
-        let active = signal.observe(layer18: overlay.layer18, layer20: overlay.layer20, tick: tick)
+        let active = signal.observe(layer18: overlay.layer18, layer20: overlay.layer20,
+                                    exposeShield: shield, tick: tick)
         if active != wasActive {
             setActivity(active)
             if !active, presentation.state.hidesNotes {
@@ -153,6 +168,21 @@ final class DockOverviewOverlayProbe {
             if layer == 18 { layer18.insert(number) } else { layer20.insert(number) }
         }
         return (layer18, layer20)
+    }
+
+    /// WindowManager's full-screen layer-19 shield exists only while Mission
+    /// Control or App Exposé is on screen; Show Desktop uses layer 18 instead.
+    private static func exposeShieldWindows(in windows: [[String: Any]],
+                                            windowManagerPID: pid_t) -> Set<Int> {
+        var shield: Set<Int> = []
+        for window in windows {
+            guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == windowManagerPID,
+                  (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 19,
+                  let number = (window[kCGWindowNumber as String] as? NSNumber)?.intValue,
+                  isFullScreen(window) else { continue }
+            shield.insert(number)
+        }
+        return shield
     }
 
     /// Excludes the Dock's own bar and other small helper windows, so a bar

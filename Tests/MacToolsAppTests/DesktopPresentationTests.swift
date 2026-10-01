@@ -135,6 +135,25 @@ final class DesktopPresentationTests: XCTestCase {
         XCTAssertFalse(signal.observe(layer18: [30], layer20: [31], tick: 20))
     }
 
+    func test_OverlaySignalHidesForWindowManagerExposeShield() {
+        var signal = DockOverviewWindowSignal()
+        signal.reset(layer18: [], layer20: [1])
+
+        // macOS 27: Show Desktop is a WindowManager layer-18 overlay, which the
+        // probe does not collect, so the Dock's windows stay unchanged.
+        XCTAssertFalse(signal.observe(layer18: [], layer20: [1], exposeShield: [], tick: 1))
+
+        // Mission Control and App Exposé add a WindowManager layer-19 shield.
+        XCTAssertTrue(signal.observe(layer18: [], layer20: [1], exposeShield: [5], tick: 2))
+        XCTAssertTrue(signal.observe(layer18: [], layer20: [1], exposeShield: [5], tick: 3))
+        XCTAssertFalse(signal.observe(layer18: [], layer20: [1], exposeShield: [], tick: 4))
+
+        // A shield that outlives the legacy Dock pair keeps notes hidden.
+        XCTAssertTrue(signal.observe(layer18: [10], layer20: [1, 11], exposeShield: [6], tick: 5))
+        XCTAssertTrue(signal.observe(layer18: [], layer20: [1], exposeShield: [6], tick: 6))
+        XCTAssertFalse(signal.observe(layer18: [], layer20: [1], exposeShield: [], tick: 7))
+    }
+
     func test_OverlayHidesNotesBeforeDockNotificationAndRestoresOnExit() throws {
         _ = NSApplication.shared
         let suite = "DesktopPresentationTests-\(UUID())"
