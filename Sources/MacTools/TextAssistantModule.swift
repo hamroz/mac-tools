@@ -18,19 +18,30 @@ final class TextAssistantModule: NSObject, ToolModule {
 
     let settings: TextAssistantSettings
     let runner: TextAssistantRunner
+    let openCode: OpenCodeServer
+    private let openRouterCatalog = OpenRouterCatalog()
     private let hud: TextAssistantHUD
     private var menuObservers: [AnyCancellable] = []
 
-    init(settings: TextAssistantSettings = TextAssistantSettings()) {
+    init(settings: TextAssistantSettings = TextAssistantSettings(), openCode: OpenCodeServer = OpenCodeServer()) {
         self.settings = settings
+        self.openCode = openCode
         let hud = TextAssistantHUD()
         self.hud = hud
         runner = TextAssistantRunner(
             settings: settings,
             bridge: TextSelectionBridge(pasteboard: SystemPasteboard(), environment: SystemSelectionEnvironment()),
-            feedback: hud
+            feedback: hud,
+            makeProvider: { settings in
+                let timeout = TimeInterval(settings.timeoutSeconds)
+                switch settings.provider {
+                case .openCode: return OpenCodeProvider(server: openCode, timeout: timeout)
+                case .openRouter: return OpenRouterProvider(timeout: timeout)
+                }
+            }
         )
         super.init()
+        hud.onOpenSettings = { [weak self] in self?.openSettings?() }
         runner.onAccessibilityMissing = { [weak self] in
             AccessibilityPermission.shared.request()
             self?.openSettings?()
@@ -47,6 +58,7 @@ final class TextAssistantModule: NSObject, ToolModule {
         KeyboardShortcuts.removeHandler(for: .textAssistantImprove)
         runner.cancel()
         hud.hide()
+        openCode.stop()
     }
 
     func makeMenuItems() -> [NSMenuItem] {
@@ -61,7 +73,9 @@ final class TextAssistantModule: NSObject, ToolModule {
     }
 
     func makeSettingsView() -> AnyView {
-        AnyView(TextAssistantSettingsView(settings: settings, permission: .shared))
+        AnyView(TextAssistantSettingsView(
+            settings: settings, permission: .shared, openCode: openCode, openRouterCatalog: openRouterCatalog
+        ))
     }
 
     /// The status menu never activates Mac Tools, so the selection stays in the frontmost app.

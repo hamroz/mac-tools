@@ -163,18 +163,23 @@ final class TextAssistantRunnerTests: XCTestCase {
         XCTAssertEqual(feedback.statuses.last, .success("Already looks good"))
     }
 
-    func test_SettingsDefaultAndPersist() {
+    func test_SettingsDefaultToOpenCodeAndPersist() {
         let settings = TextAssistantSettings(defaults: defaults)
-        XCTAssertEqual(settings.effectiveModel, OpenRouterAPI.defaultModel)
+        XCTAssertEqual(settings.provider, .openCode)
+        XCTAssertEqual(settings.effectiveModel, "", "Empty lets OpenCode pick a signed-in default")
         XCTAssertEqual(settings.maxLength, 8_000)
         XCTAssertEqual(settings.timeoutSeconds, 30)
-        settings.model = " google/gemini-3.1-flash-lite "
+        settings.openCodeModel = "opencode/claude-haiku-4-5"
+        settings.openRouterModel = " google/gemini-3.1-flash-lite "
         settings.maxLength = 16_000
         let reloaded = TextAssistantSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.effectiveModel, "opencode/claude-haiku-4-5")
+        reloaded.provider = .openRouter
         XCTAssertEqual(reloaded.effectiveModel, "google/gemini-3.1-flash-lite")
         XCTAssertEqual(reloaded.maxLength, 16_000)
-        reloaded.model = ""
+        reloaded.openRouterModel = ""
         XCTAssertEqual(reloaded.effectiveModel, OpenRouterAPI.defaultModel)
+        XCTAssertEqual(TextAssistantSettings(defaults: defaults).provider, .openRouter)
     }
 
     // MARK: Helpers

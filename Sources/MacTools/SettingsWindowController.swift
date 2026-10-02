@@ -173,7 +173,7 @@ private struct GeneralSettingsPane: View {
 
             Section("Privacy") {
                 Label {
-                    Text("Mac Tools has no accounts or analytics, and your notes stay on this Mac. AI Usage goes online to read your limits from Anthropic and OpenAI. Text Assistant sends the text you select to OpenRouter only when you run it.")
+                    Text("Mac Tools has no accounts or analytics, and your notes stay on this Mac. AI Usage goes online to read your limits from Anthropic and OpenAI. Text Assistant sends the text you select to the model provider you chose, only when you run it.")
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: "lock.shield.fill").foregroundStyle(.green)

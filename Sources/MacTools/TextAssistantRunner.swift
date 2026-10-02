@@ -36,9 +36,7 @@ final class TextAssistantRunner: ObservableObject {
         settings: TextAssistantSettings,
         bridge: TextSelectionBridge,
         feedback: TextAssistantFeedback,
-        makeProvider: @escaping @MainActor (TextAssistantSettings) -> TextProvider = { settings in
-            OpenRouterProvider(timeout: TimeInterval(settings.timeoutSeconds))
-        }
+        makeProvider: @escaping @MainActor (TextAssistantSettings) -> TextProvider
     ) {
         self.settings = settings
         self.bridge = bridge

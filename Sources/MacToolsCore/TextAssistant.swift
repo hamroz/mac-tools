@@ -10,6 +10,10 @@ public enum TextAssistantError: LocalizedError, Equatable, Sendable {
     case noSelection
     case textTooLong(limit: Int, actual: Int)
     case missingAPIKey
+    case noModelSelected
+    case openCodeNotInstalled
+    case openCodeNotSignedIn(provider: String)
+    case openCodeUnavailable(String)
     case invalidAPIKey
     case insufficientCredits
     case rateLimited
@@ -32,16 +36,24 @@ public enum TextAssistantError: LocalizedError, Equatable, Sendable {
             "The selection is too long (\(actual.formatted()) characters; the limit is \(limit.formatted()))."
         case .missingAPIKey:
             "Add your OpenRouter API key in Mac Tools Settings → Text Assistant."
+        case .noModelSelected:
+            "Choose a model in Mac Tools Settings → Text Assistant."
+        case .openCodeNotInstalled:
+            "OpenCode isn’t installed. Install it from opencode.ai, or switch Text Assistant to OpenRouter in Settings."
+        case .openCodeNotSignedIn(let provider):
+            "OpenCode isn’t signed in to \(provider). Use Sign In… in Mac Tools Settings → Text Assistant."
+        case .openCodeUnavailable(let message):
+            "OpenCode couldn’t start: \(message)"
         case .invalidAPIKey:
-            "OpenRouter rejected the API key. Check it in Mac Tools Settings."
+            "The model provider rejected the API key or sign-in. Check it in Mac Tools Settings."
         case .insufficientCredits:
-            "Your OpenRouter account is out of credits."
+            "Your account with the model provider is out of credits."
         case .rateLimited:
-            "OpenRouter is rate limiting requests. Try again in a moment."
+            "The model provider is rate limiting requests. Try again in a moment."
         case .timedOut:
             "The model took too long to answer."
         case .network(let message):
-            "Couldn’t reach OpenRouter: \(message)"
+            "Couldn’t connect: \(message)"
         case .provider(let status, let message):
             message.map { "The model failed (HTTP \(status)): \($0)" } ?? "The model failed (HTTP \(status))."
         case .emptyResponse:
@@ -214,5 +226,234 @@ public enum OpenRouterAPI {
         case 429: .rateLimited
         default: .provider(status: status, message: message.map { String($0.prefix(200)) })
         }
+    }
+}
+
+// MARK: - Model catalog
+
+/// One model a provider offers, keyed as `provider/model` like OpenCode does.
+public struct ModelOption: Identifiable, Hashable, Sendable {
+    public let providerID: String
+    public let modelID: String
+    public let name: String
+    /// US dollars per million tokens, when known.
+    public let inputPrice: Double?
+    public let outputPrice: Double?
+
+    public init(providerID: String, modelID: String, name: String, inputPrice: Double? = nil, outputPrice: Double? = nil) {
+        self.providerID = providerID
+        self.modelID = modelID
+        self.name = name
+        self.inputPrice = inputPrice
+        self.outputPrice = outputPrice
+    }
+
+    public var id: String { "\(providerID)/\(modelID)" }
+    public var isFree: Bool { inputPrice == 0 && outputPrice == 0 }
+
+    /// Splits `provider/model`; model IDs may contain more slashes, provider IDs never do.
+    public static func split(_ key: String) -> (providerID: String, modelID: String)? {
+        guard let slash = key.firstIndex(of: "/") else { return nil }
+        let provider = String(key[..<slash]), model = String(key[key.index(after: slash)...])
+        return provider.isEmpty || model.isEmpty ? nil : (provider, model)
+    }
+}
+
+public struct ModelGroup: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let models: [ModelOption]
+
+    public init(id: String, name: String, models: [ModelOption]) {
+        self.id = id
+        self.name = name
+        self.models = models
+    }
+}
+
+extension Array where Element == ModelGroup {
+    public func model(withKey key: String) -> ModelOption? {
+        lazy.flatMap(\.models).first { $0.id == key }
+    }
+
+    /// A fast, inexpensive default among what is signed in.
+    public func preferredDefault(_ preferences: [String]) -> ModelOption? {
+        for key in preferences { if let model = model(withKey: key) { return model } }
+        return first?.models.first
+    }
+}
+
+// MARK: - OpenCode
+
+/// OpenCode's headless server (`opencode serve`). Mac Tools runs its own instance
+/// with a minimal agent, so it uses the user's OpenCode sign-ins without its coding prompt or tools.
+public enum OpenCodeAPI {
+    public static let agentName = "mactools-text"
+    public static let preferredModels = [
+        "opencode/claude-haiku-4-5", "anthropic/claude-haiku-4-5", "openrouter/anthropic/claude-haiku-4.5",
+        "github-copilot/claude-haiku-4.5", "opencode/gpt-5-nano", "deepseek/deepseek-flash",
+    ]
+
+    /// Merged over the user's own config through OPENCODE_CONFIG_CONTENT.
+    public static func configContent() -> String {
+        let config: [String: Any] = [
+            "$schema": "https://opencode.ai/config.json",
+            "autoupdate": false,
+            "share": "disabled",
+            "snapshot": false,
+            "agent": [
+                agentName: [
+                    "mode": "primary",
+                    "description": "Mac Tools Text Assistant: rewrites selected text, no tools.",
+                    // Replaces OpenCode's coding prompt; each request adds its own instructions.
+                    "prompt": "You transform text for the user. Follow the instructions you are given exactly.",
+                    "tools": ["*": false],
+                    "permission": ["edit": "deny", "bash": "deny", "webfetch": "deny"],
+                ],
+            ],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: config, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The server announces its address as "opencode server listening on http://127.0.0.1:4096".
+    public static func listeningURL(in output: String) -> URL? {
+        guard let range = output.range(of: #"listening on (https?://[^\s]+)"#, options: .regularExpression) else { return nil }
+        let match = output[range].replacingOccurrences(of: "listening on ", with: "")
+        return URL(string: match)
+    }
+
+    public static func messageBody(for request: TextCompletionRequest, providerID: String, modelID: String) throws -> Data {
+        let body: [String: Any] = [
+            "agent": agentName,
+            "model": ["providerID": providerID, "modelID": modelID],
+            "system": request.system,
+            "tools": ["*": false],
+            "parts": [["type": "text", "text": request.user]],
+        ]
+        return try JSONSerialization.data(withJSONObject: body)
+    }
+
+    private struct ProviderList: Decodable {
+        struct Provider: Decodable {
+            struct Model: Decodable {
+                struct Cost: Decodable {
+                    let input: Double?
+                    let output: Double?
+                }
+                let id: String?
+                let name: String?
+                let cost: Cost?
+                let status: String?
+            }
+            let id: String
+            let name: String?
+            let models: [String: Model]?
+        }
+        let all: [Provider]
+        let connected: [String]?
+    }
+
+    /// Models of the providers the user is signed in to, from `GET /provider`.
+    public static func modelGroups(from data: Data) throws -> [ModelGroup] {
+        let list = try JSONDecoder().decode(ProviderList.self, from: data)
+        let connected = Set(list.connected ?? [])
+        return list.all.filter { connected.contains($0.id) }.map { provider in
+            let models = (provider.models ?? [:]).compactMap { key, model -> ModelOption? in
+                guard model.status != "deprecated" else { return nil }
+                return ModelOption(
+                    providerID: provider.id, modelID: model.id ?? key, name: model.name ?? key,
+                    inputPrice: model.cost?.input, outputPrice: model.cost?.output
+                )
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return ModelGroup(id: provider.id, name: provider.name ?? provider.id, models: models)
+        }
+        .filter { !$0.models.isEmpty }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private struct MessageResponse: Decodable {
+        struct Info: Decodable {
+            struct Failure: Decodable {
+                struct Details: Decodable {
+                    let message: String?
+                    let statusCode: Int?
+                    let providerID: String?
+                }
+                let name: String?
+                let data: Details?
+            }
+            let error: Failure?
+        }
+        struct Part: Decodable {
+            let type: String
+            let text: String?
+            let synthetic: Bool?
+        }
+        let info: Info?
+        let parts: [Part]?
+    }
+
+    /// The assistant's text from `POST /session/{id}/message`, or the failure it reports.
+    public static func messageText(status: Int, data: Data) throws -> String {
+        guard (200..<300).contains(status) else {
+            throw status == 401 ? TextAssistantError.openCodeUnavailable("the server refused Mac Tools’ password")
+                : TextAssistantError.provider(status: status, message: nil)
+        }
+        guard let response = try? JSONDecoder().decode(MessageResponse.self, from: data) else {
+            throw TextAssistantError.emptyResponse
+        }
+        if let failure = response.info?.error { throw error(for: failure) }
+        let text = (response.parts ?? []).filter { $0.type == "text" && $0.synthetic != true }.compactMap(\.text).joined()
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TextAssistantError.emptyResponse }
+        return text
+    }
+
+    private static func error(for failure: MessageResponse.Info.Failure) -> TextAssistantError {
+        let message = failure.data?.message.map { String($0.prefix(200)) }
+        switch failure.name {
+        case "ProviderAuthError":
+            return .openCodeNotSignedIn(provider: failure.data?.providerID ?? "this provider")
+        case "MessageAbortedError":
+            return .timedOut
+        case "APIError":
+            if let status = failure.data?.statusCode { return OpenRouterAPI.error(status: status, message: message) }
+            return .provider(status: 502, message: message)
+        default:
+            return .provider(status: 500, message: message ?? failure.name)
+        }
+    }
+}
+
+extension OpenRouterAPI {
+    public static let modelsEndpoint = URL(string: "https://openrouter.ai/api/v1/models")!
+
+    private struct ModelList: Decodable {
+        struct Model: Decodable {
+            struct Pricing: Decodable {
+                let prompt: String?
+                let completion: String?
+            }
+            let id: String
+            let name: String?
+            let pricing: Pricing?
+        }
+        let data: [Model]
+    }
+
+    /// OpenRouter's public model list, one group per model vendor.
+    public static func modelGroups(from data: Data) throws -> [ModelGroup] {
+        let list = try JSONDecoder().decode(ModelList.self, from: data)
+        let perMillion = { (value: String?) in value.flatMap(Double.init).map { $0 * 1_000_000 } }
+        let models = list.data.map { model in
+            ModelOption(providerID: "openrouter", modelID: model.id, name: model.name ?? model.id,
+                        inputPrice: perMillion(model.pricing?.prompt), outputPrice: perMillion(model.pricing?.completion))
+        }
+        return Dictionary(grouping: models) { $0.modelID.split(separator: "/").first.map(String.init) ?? "other" }
+            .map { vendor, models in
+                ModelGroup(id: vendor, name: vendor, models: models.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 }

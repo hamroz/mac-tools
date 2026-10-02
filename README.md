@@ -27,9 +27,12 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 - Trigger it with your own shortcut (**Settings → Text Assistant → Shortcut**; none is set by default) or **Improve Selected Text** in the Mac Tools menu. A small bubble next to the pointer shows progress and errors.
 - The selection is read through Accessibility when the app exposes it, otherwise by sending ⌘C. The result is pasted with ⌘V. Your clipboard, with every format on it, is put back afterwards, including after errors and cancellations. Pressing the shortcut again while a request is running cancels it and starts over.
 - If the result can't be pasted (you switched apps meanwhile), it stays on the clipboard and the bubble says so. **Copy Last Result** in the menu brings back the most recent result; it is kept in memory only.
-- Uses [OpenRouter](https://openrouter.ai/keys). The API key is stored only in the login Keychain (`com.local.MacTools.TextAssistant`). The model defaults to `anthropic/claude-haiku-4.5` and can be any OpenRouter model ID. Transient failures (network, rate limit, server errors) are retried once.
+- **Models come from OpenCode by default**, using the providers you already signed in to with [OpenCode](https://opencode.ai) (OpenCode Zen, OpenRouter, Anthropic, GitHub Copilot, DeepSeek…), so there is no extra API key. **Sign In…** opens Terminal with `opencode auth login` to add a provider; the refresh button picks it up. Choose the model from a searchable list grouped by provider, with prices and free models marked; Automatic picks a fast, inexpensive model you are signed in to (Claude Haiku 4.5 when available).
+- Text Assistant runs its own `opencode serve` on 127.0.0.1, behind a password made fresh for each launch, with a minimal agent that has no tools and none of OpenCode's coding prompt. It starts on first use (about a second), stops after 10 idle minutes and when Mac Tools quits, and keeps its throwaway sessions in its own database (`~/Library/Application Support/Mac Tools/Text Assistant/OpenCode/`), out of your OpenCode history.
+- Alternatively, use an **OpenRouter API key** stored only in the login Keychain (`com.local.MacTools.TextAssistant`), with a model chosen from OpenRouter's public list (default `anthropic/claude-haiku-4.5`).
+- Transient failures (network, rate limit, server errors) are retried once. Errors appear in the bubble with an **Open Settings** button.
 - Needs **Accessibility** access: allow **Mac Tools** in System Settings → Privacy & Security → Accessibility. The first run without it opens the system prompt and the settings page.
-- Selected text is sent to OpenRouter only when you run it, and is never logged. Secure (password) fields are refused.
+- Selected text is sent to the chosen model provider only when you run it, and is never logged. Secure (password) fields are refused.
 
 ## Settings
 
@@ -37,7 +40,7 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 
 - **General**: version, Launch at Login, and the privacy statement that applies to every tool.
 - **All Tools**: the tool inventory. Each tool can be switched on or off; a tool that is off stops running, closes its windows, and leaves the menu bar menu. Its data stays on this Mac, and the choice is remembered across launches.
-- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval. Text Assistant's page covers its shortcut, OpenRouter key and model, Accessibility status, and limits.
+- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval. Text Assistant's page covers its shortcut, OpenCode sign-in or OpenRouter key, model, Accessibility status, and limits.
 
 ## Build and test
 
