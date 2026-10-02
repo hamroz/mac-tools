@@ -16,6 +16,9 @@ public enum TextAssistantError: LocalizedError, Equatable, Sendable {
     case openCodeNotInstalled
     case openCodeNotSignedIn(provider: String)
     case openCodeUnavailable(String)
+    case claudeCodeNotInstalled
+    case claudeCodeNotSignedIn
+    case claudeCodeFailed(String)
     case invalidAPIKey
     case insufficientCredits
     case rateLimited
@@ -48,6 +51,12 @@ public enum TextAssistantError: LocalizedError, Equatable, Sendable {
             "OpenCode isn’t signed in to \(provider). Use Sign In… in Mac Tools Settings → Text Assistant."
         case .openCodeUnavailable(let message):
             "OpenCode couldn’t start: \(message)"
+        case .claudeCodeNotInstalled:
+            "Claude Code isn’t installed. Install it from claude.com/claude-code, or choose another model source in Settings."
+        case .claudeCodeNotSignedIn:
+            "Claude Code isn’t signed in. Use Sign In… in Mac Tools Settings → Text Assistant."
+        case .claudeCodeFailed(let message):
+            "Claude Code failed: \(message)"
         case .invalidAPIKey:
             "The model provider rejected the API key or sign-in. Check it in Mac Tools Settings."
         case .insufficientCredits:
@@ -150,7 +159,7 @@ public enum OpenRouterAPI {
         let stream: Bool
     }
 
-    public static func urlRequest(for request: TextCompletionRequest, apiKey: String, timeout: TimeInterval) throws -> URLRequest {
+    public static func urlRequest(for request: TextCompletionRequest, apiKey: String, timeout: TimeInterval, stream: Bool = false) throws -> URLRequest {
         var urlRequest = URLRequest(url: endpoint, timeoutInterval: timeout)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -161,7 +170,7 @@ public enum OpenRouterAPI {
             model: request.model,
             messages: [.init(role: "system", content: request.system), .init(role: "user", content: request.user)],
             temperature: 0.3,
-            stream: false
+            stream: stream
         )
         urlRequest.httpBody = try JSONEncoder().encode(body)
         return urlRequest
@@ -442,5 +451,117 @@ extension OpenRouterAPI {
                 ModelGroup(id: vendor, name: vendor, models: models.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
             }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
+// MARK: - Streaming
+
+/// One line of a server-sent event stream, as the providers report it.
+public enum StreamEvent: Equatable, Sendable {
+    case delta(String)
+    case done
+    case failure(TextAssistantError)
+    case ignore
+}
+
+extension OpenRouterAPI {
+    private struct Chunk: Decodable {
+        struct Choice: Decodable {
+            struct Delta: Decodable { let content: String? }
+            let delta: Delta?
+        }
+        struct Failure: Decodable {
+            let message: String?
+            let code: Int?
+        }
+        let choices: [Choice]?
+        let error: Failure?
+    }
+
+    /// Reads one line of OpenRouter's streamed completion (`stream: true`).
+    public static func streamEvent(fromLine line: String) -> StreamEvent {
+        // ": OPENROUTER PROCESSING" keep-alive comments and blank separators carry nothing.
+        guard line.hasPrefix("data:") else { return .ignore }
+        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        if payload == "[DONE]" { return .done }
+        guard let chunk = try? JSONDecoder().decode(Chunk.self, from: Data(payload.utf8)) else { return .ignore }
+        if let failure = chunk.error { return .failure(error(status: failure.code ?? 502, message: failure.message)) }
+        guard let text = chunk.choices?.first?.delta?.content, !text.isEmpty else { return .ignore }
+        return .delta(text)
+    }
+}
+
+extension OpenCodeAPI {
+    private struct Event: Decodable {
+        struct Properties: Decodable {
+            let sessionID: String?
+            let field: String?
+            let delta: String?
+        }
+        let type: String
+        let properties: Properties?
+    }
+
+    /// The next piece of the answer in one line of OpenCode's `GET /event` stream,
+    /// or nil for anything else, including other sessions' events.
+    public static func textDelta(fromEventLine line: String, sessionID: String) -> String? {
+        guard line.hasPrefix("data:"),
+              let event = try? JSONDecoder().decode(Event.self, from: Data(line.dropFirst(5).utf8)),
+              event.type == "message.part.delta",
+              let properties = event.properties, properties.sessionID == sessionID,
+              properties.field == "text", let delta = properties.delta, !delta.isEmpty else { return nil }
+        return delta
+    }
+}
+
+// MARK: - Claude Code CLI
+
+/// Runs `claude -p` headless with the user's Claude Code sign-in. Slower to start
+/// than the other sources, since each run starts a new Claude Code process.
+public enum ClaudeCodeCLI {
+    public static let models = [("haiku", "Claude Haiku"), ("sonnet", "Claude Sonnet"), ("opus", "Claude Opus")]
+    public static let defaultModel = "haiku"
+
+    /// The prompt is read from a private file and the text from standard input,
+    /// so neither shows up in the process list.
+    public static func arguments(for request: TextCompletionRequest, systemPromptFile: String) -> [String] {
+        [
+            "-p",
+            "--model", request.model.isEmpty ? defaultModel : request.model,
+            "--system-prompt-file", systemPromptFile,
+            "--tools", "",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--disable-slash-commands",
+            "--output-format", "text",
+        ]
+    }
+
+    /// Variables that would make `claude` think it runs inside another Claude Code session.
+    public static func cleanEnvironment(_ environment: [String: String], path: String?) -> [String: String] {
+        var clean = environment.filter { key, _ in !key.hasPrefix("CLAUDE") && key != "ANTHROPIC_BASE_URL" }
+        if let path { clean["PATH"] = path }
+        return clean
+    }
+
+    public static func result(status: Int32, output: String, errors: String) throws -> String {
+        let combined = (output + "\n" + errors).lowercased()
+        if combined.contains("not logged in") || combined.contains("please run /login") || combined.contains("invalid api key") {
+            throw TextAssistantError.claudeCodeNotSignedIn
+        }
+        guard status == 0 else {
+            let detail = (errors.isEmpty ? output : errors).trimmingCharacters(in: .whitespacesAndNewlines)
+            if combined.contains("rate limit") || combined.contains("usage limit") { throw TextAssistantError.rateLimited }
+            throw TextAssistantError.claudeCodeFailed(detail.isEmpty ? "exit status \(status)" : String(detail.suffix(200)))
+        }
+        guard !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TextAssistantError.emptyResponse }
+        return output
+    }
+
+    private struct AuthStatus: Decodable { let loggedIn: Bool? }
+
+    /// From `claude auth status`.
+    public static func isSignedIn(authStatusOutput: String) -> Bool {
+        (try? JSONDecoder().decode(AuthStatus.self, from: Data(authStatusOutput.utf8)))?.loggedIn == true
     }
 }

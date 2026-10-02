@@ -156,3 +156,52 @@ final class TextAssistantCatalogTests: XCTestCase {
         XCTAssertTrue(groups[1].models[0].isFree)
     }
 }
+
+final class TextAssistantStreamingTests: XCTestCase {
+    func test_OpenRouterStreamLines() {
+        XCTAssertEqual(OpenRouterAPI.streamEvent(fromLine: ": OPENROUTER PROCESSING"), .ignore)
+        XCTAssertEqual(OpenRouterAPI.streamEvent(fromLine: ""), .ignore)
+        XCTAssertEqual(OpenRouterAPI.streamEvent(fromLine: #"data: {"choices":[{"delta":{"content":"Hel"}}]}"#), .delta("Hel"))
+        XCTAssertEqual(OpenRouterAPI.streamEvent(fromLine: #"data: {"choices":[{"delta":{"role":"assistant"}}]}"#), .ignore)
+        XCTAssertEqual(OpenRouterAPI.streamEvent(fromLine: "data: [DONE]"), .done)
+        XCTAssertEqual(OpenRouterAPI.streamEvent(fromLine: #"data: {"error":{"message":"slow","code":429}}"#), .failure(.rateLimited))
+    }
+
+    func test_OpenCodeEventsYieldOnlyThisSessionsText() {
+        let delta = #"data: {"type":"message.part.delta","properties":{"sessionID":"ses_1","messageID":"m","partID":"p","field":"text","delta":"Apples"}}"#
+        XCTAssertEqual(OpenCodeAPI.textDelta(fromEventLine: delta, sessionID: "ses_1"), "Apples")
+        XCTAssertNil(OpenCodeAPI.textDelta(fromEventLine: delta, sessionID: "ses_2"))
+        XCTAssertNil(OpenCodeAPI.textDelta(fromEventLine: #"data: {"type":"session.idle","properties":{"sessionID":"ses_1"}}"#, sessionID: "ses_1"))
+        XCTAssertNil(OpenCodeAPI.textDelta(fromEventLine: "event: ping", sessionID: "ses_1"))
+    }
+
+    func test_ClaudeCodeRunsWithoutToolsAndKeepsTextOffTheCommandLine() {
+        let request = TextCompletionRequest(system: "secret style samples", user: "<text>\nmy text\n</text>", model: "")
+        let arguments = ClaudeCodeCLI.arguments(for: request, systemPromptFile: "/tmp/p.txt")
+        XCTAssertEqual(arguments.first, "-p")
+        XCTAssertEqual(arguments[arguments.firstIndex(of: "--model")! + 1], "haiku")
+        XCTAssertEqual(arguments[arguments.firstIndex(of: "--tools")! + 1], "", "No tools")
+        XCTAssertEqual(arguments[arguments.firstIndex(of: "--system-prompt-file")! + 1], "/tmp/p.txt")
+        XCTAssertTrue(arguments.contains("--no-session-persistence"))
+        XCTAssertFalse(arguments.joined().contains("my text"))
+        XCTAssertFalse(arguments.joined().contains("secret"))
+    }
+
+    func test_ClaudeCodeResultsAndSignIn() {
+        XCTAssertEqual(try ClaudeCodeCLI.result(status: 0, output: "Fixed.\n", errors: ""), "Fixed.\n")
+        XCTAssertThrowsError(try ClaudeCodeCLI.result(status: 1, output: "Not logged in · Please run /login", errors: "")) {
+            XCTAssertEqual($0 as? TextAssistantError, .claudeCodeNotSignedIn)
+        }
+        XCTAssertThrowsError(try ClaudeCodeCLI.result(status: 1, output: "", errors: "boom")) {
+            XCTAssertEqual($0 as? TextAssistantError, .claudeCodeFailed("boom"))
+        }
+        XCTAssertThrowsError(try ClaudeCodeCLI.result(status: 0, output: " \n", errors: "")) {
+            XCTAssertEqual($0 as? TextAssistantError, .emptyResponse)
+        }
+        XCTAssertTrue(ClaudeCodeCLI.isSignedIn(authStatusOutput: #"{"loggedIn": true, "authMethod": "claude.ai"}"#))
+        XCTAssertFalse(ClaudeCodeCLI.isSignedIn(authStatusOutput: #"{"loggedIn": false}"#))
+        XCTAssertFalse(ClaudeCodeCLI.isSignedIn(authStatusOutput: "garbage"))
+        let env = ClaudeCodeCLI.cleanEnvironment(["HOME": "/h", "CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "x", "ANTHROPIC_BASE_URL": "u"], path: "/bin")
+        XCTAssertEqual(env, ["HOME": "/h", "PATH": "/bin"])
+    }
+}

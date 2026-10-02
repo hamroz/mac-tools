@@ -42,6 +42,7 @@ final class TextAssistantSetupCheck: ObservableObject {
     private let settings: TextAssistantSettings
     private let configStore: TextAssistantConfigStore
     private let openCode: OpenCodeServer
+    private let claudeCode: ClaudeCodeTool
     private let isAccessibilityTrusted: () -> Bool
     private let hasOpenRouterKey: () -> Bool
     private let makeProvider: (TextAssistantSettings) -> TextProvider
@@ -51,6 +52,7 @@ final class TextAssistantSetupCheck: ObservableObject {
         settings: TextAssistantSettings,
         configStore: TextAssistantConfigStore,
         openCode: OpenCodeServer,
+        claudeCode: ClaudeCodeTool = ClaudeCodeTool(),
         isAccessibilityTrusted: @escaping () -> Bool = { AccessibilityPermission.shared.refresh() },
         hasOpenRouterKey: @escaping () -> Bool = { KeychainStore.openRouterKey.hasValue },
         makeProvider: @escaping (TextAssistantSettings) -> TextProvider
@@ -58,6 +60,7 @@ final class TextAssistantSetupCheck: ObservableObject {
         self.settings = settings
         self.configStore = configStore
         self.openCode = openCode
+        self.claudeCode = claudeCode
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.hasOpenRouterKey = hasOpenRouterKey
         self.makeProvider = makeProvider
@@ -130,6 +133,18 @@ final class TextAssistantSetupCheck: ObservableObject {
             }
             set(.provider, .passed("OpenRouter API key saved in the Keychain."))
             return true
+        case .claudeCode:
+            await claudeCode.refresh()
+            guard claudeCode.isInstalled else {
+                set(.provider, .failed(TextAssistantError.claudeCodeNotInstalled.errorDescription!))
+                return false
+            }
+            guard claudeCode.isSignedIn == true else {
+                set(.provider, .failed(TextAssistantError.claudeCodeNotSignedIn.errorDescription!))
+                return false
+            }
+            set(.provider, .passed("Claude Code \(claudeCode.version ?? "") is signed in."))
+            return true
         case .openCode:
             if openCode.executable == nil { await openCode.locate() }
             guard openCode.isInstalled else {
@@ -155,6 +170,8 @@ final class TextAssistantSetupCheck: ObservableObject {
             return openCode.modelGroups.model(withKey: key)?.name ?? key
         case .openRouter:
             return key
+        case .claudeCode:
+            return ClaudeCodeCLI.models.first { $0.0 == key }?.1 ?? key
         }
     }
 

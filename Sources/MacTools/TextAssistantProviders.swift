@@ -2,9 +2,42 @@ import Foundation
 import MacToolsCore
 
 /// Turns a prompt into text. New back ends (an OpenAI-compatible endpoint,
-/// the Anthropic API, the Claude Code CLI) conform to this.
+/// the Anthropic API) conform to this.
 protocol TextProvider: Sendable {
     func complete(_ request: TextCompletionRequest) async throws -> String
+    /// Like `complete`, reporting the text so far as it arrives, for the preview.
+    func stream(_ request: TextCompletionRequest, onPartial: @escaping @Sendable (String) -> Void) async throws -> String
+}
+
+extension TextProvider {
+    /// Sources that can't stream answer all at once.
+    func stream(_ request: TextCompletionRequest, onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
+        try await complete(request)
+    }
+}
+
+/// The text received so far, shared with the code reading the stream.
+final class StreamedText: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+    private let onPartial: @Sendable (String) -> Void
+
+    init(_ onPartial: @escaping @Sendable (String) -> Void) { self.onPartial = onPartial }
+
+    var isEmpty: Bool { lock.withLock { text.isEmpty } }
+
+    func append(_ piece: String) {
+        let current = lock.withLock { text += piece; return text }
+        onPartial(current)
+    }
+}
+
+private func networkError(_ error: URLError) -> Error {
+    switch error.code {
+    case .cancelled: CancellationError()
+    case .timedOut: TextAssistantError.timedOut
+    default: TextAssistantError.network(error.localizedDescription)
+    }
 }
 
 struct OpenRouterProvider: TextProvider {
@@ -41,6 +74,52 @@ struct OpenRouterProvider: TextProvider {
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         return try OpenRouterAPI.parse(status: status, data: data)
     }
+
+    func stream(_ request: TextCompletionRequest, onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
+        guard let key = apiKey()?.trimmingCharacters(in: .whitespacesAndNewlines), !key.isEmpty else {
+            throw TextAssistantError.missingAPIKey
+        }
+        let urlRequest = try OpenRouterAPI.urlRequest(for: request, apiKey: key, timeout: timeout, stream: true)
+        let streamed = StreamedText(onPartial)
+        do {
+            return try await receive(urlRequest, into: streamed)
+        } catch let error as TextAssistantError where error.isTransient && streamed.isEmpty {
+            // Retry only before anything is on screen, so the preview never restarts mid-sentence.
+            try await Task.sleep(for: retryDelay)
+            return try await receive(urlRequest, into: StreamedText(onPartial))
+        }
+    }
+
+    private func receive(_ request: URLRequest, into streamed: StreamedText) async throws -> String {
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else {
+                var body = Data()
+                for try await byte in bytes { body.append(byte) }
+                throw OpenRouterAPI.error(status: status, data: body)
+            }
+            var text = ""
+            for try await line in bytes.lines {
+                switch OpenRouterAPI.streamEvent(fromLine: line) {
+                case .delta(let piece):
+                    text += piece
+                    streamed.append(piece)
+                case .done: return try nonEmpty(text)
+                case .failure(let error): throw error
+                case .ignore: continue
+                }
+            }
+            return try nonEmpty(text)
+        } catch let error as URLError {
+            throw networkError(error)
+        }
+    }
+
+    private func nonEmpty(_ text: String) throws -> String {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw TextAssistantError.emptyResponse }
+        return text
+    }
 }
 
 /// Uses the providers and sign-ins the user set up in OpenCode, through
@@ -62,8 +141,48 @@ struct OpenCodeProvider: TextProvider {
         }
     }
 
-    private func send(_ body: Data, to connection: OpenCodeServer.Connection) async throws -> String {
+    func stream(_ request: TextCompletionRequest, onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
+        let (connection, providerID, modelID) = try await server.prepare(modelKey: request.model)
+        let body = try OpenCodeAPI.messageBody(for: request, providerID: providerID, modelID: modelID)
+        let streamed = StreamedText(onPartial)
+        do {
+            return try await send(body, to: connection, streamingInto: streamed)
+        } catch let error as TextAssistantError where error.isTransient && streamed.isEmpty {
+            try await Task.sleep(for: retryDelay)
+            return try await send(body, to: connection, streamingInto: StreamedText(onPartial))
+        }
+    }
+
+    /// OpenCode answers the message request when the reply is complete; the pieces
+    /// arrive meanwhile on its event stream, which is opened first.
+    private func send(_ body: Data, to connection: OpenCodeServer.Connection, streamingInto streamed: StreamedText?) async throws -> String {
+        guard let streamed else { return try await send(body, to: connection) }
         let sessionID = try await createSession(connection)
+        var eventsRequest = makeRequest(connection, "event", method: "GET")
+        eventsRequest.timeoutInterval = max(timeout, 60)
+        let (ready, readySignal) = AsyncStream<Void>.makeStream()
+        let events = Task { [session] in
+            guard let (bytes, _) = try? await session.bytes(for: eventsRequest) else { readySignal.finish(); return }
+            readySignal.yield()
+            for try await line in bytes.lines {
+                if let piece = OpenCodeAPI.textDelta(fromEventLine: line, sessionID: sessionID) { streamed.append(piece) }
+            }
+        }
+        defer { events.cancel() }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { for await _ in ready { return } }
+            group.addTask { try? await Task.sleep(for: .seconds(2)) }
+            await group.next()
+            group.cancelAll()
+        }
+        return try await send(body, to: connection, session: sessionID)
+    }
+
+    private func send(_ body: Data, to connection: OpenCodeServer.Connection) async throws -> String {
+        try await send(body, to: connection, session: try await createSession(connection))
+    }
+
+    private func send(_ body: Data, to connection: OpenCodeServer.Connection, session sessionID: String) async throws -> String {
         defer {
             // Runs are not kept, even in Mac Tools' own OpenCode database.
             let request = makeRequest(connection, "session/\(sessionID)", method: "DELETE")

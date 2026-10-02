@@ -10,6 +10,7 @@ final class TextAssistantRunnerTests: XCTestCase {
     private var pasteboard: FakePasteboard!
     private var environment: FakeEnvironment!
     private var feedback: RecordingFeedback!
+    private var preview: RecordingPreview!
     private var configDirectory: URL!
     private var configStore: TextAssistantConfigStore!
 
@@ -21,6 +22,7 @@ final class TextAssistantRunnerTests: XCTestCase {
         pasteboard = FakePasteboard(original)
         environment = FakeEnvironment(pasteboard: pasteboard)
         feedback = RecordingFeedback()
+        preview = RecordingPreview()
         configDirectory = FileManager.default.temporaryDirectory.appending(path: "TextAssistantConfig-\(UUID().uuidString)")
         configStore = TextAssistantConfigStore(directory: configDirectory)
         configStore.reload()
@@ -276,6 +278,93 @@ final class TextAssistantRunnerTests: XCTestCase {
         XCTAssertEqual(pasteboard.snapshot(), original)
     }
 
+    // MARK: Preview
+
+    func test_PreviewStreamsTheResultAndReplacesOnReturn() async {
+        let settings = TextAssistantSettings(defaults: defaults)
+        settings.outputMode = .preview
+        environment.copySelection = "helo"
+        preview.decision = .replace
+        let runner = makeRunner(StreamingProvider(pieces: ["Hel", "lo."]), settings: settings)
+
+        runner.run(.improve)
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(preview.began, ["Improve · My style"])
+        XCTAssertEqual(preview.canReplace, true)
+        XCTAssertEqual(preview.updates.last, "Hello.")
+        XCTAssertEqual(preview.finished, ["Hello."])
+        XCTAssertEqual(environment.pasted, ["Hello."])
+        XCTAssertEqual(pasteboard.snapshot(), original)
+        XCTAssertEqual(feedback.statuses.last, .success("Done"))
+    }
+
+    func test_PreviewCopyLeavesTheResultAndCancelLeavesNothing() async {
+        let settings = TextAssistantSettings(defaults: defaults)
+        settings.outputMode = .preview
+        environment.copySelection = "helo"
+        preview.decision = .copy
+        let runner = makeRunner(StreamingProvider(pieces: ["Hello."]), settings: settings)
+        runner.run(.improve)
+        await runner.waitUntilIdle()
+        XCTAssertEqual(environment.pasted, [])
+        XCTAssertEqual(pasteboard.string(), "Hello.", "Copy is the one deliberate clipboard change")
+
+        pasteboard.restore(original)
+        preview.decision = .cancel
+        runner.run(.improve)
+        await runner.waitUntilIdle()
+        XCTAssertEqual(environment.pasted, [])
+        XCTAssertEqual(pasteboard.snapshot(), original)
+    }
+
+    func test_ReadOnlySelectionOpensThePreviewToCopyEvenInReplaceMode() async {
+        environment.axSelection = "Text on a web page"
+        environment.axEditable = false
+        preview.decision = .copy
+        let runner = makeRunner(StreamingProvider(pieces: ["Text on a web page."]))
+
+        runner.run(.improve)
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(preview.canReplace, false)
+        XCTAssertEqual(environment.posted, [], "Nothing is pasted into read-only text")
+        XCTAssertEqual(pasteboard.string(), "Text on a web page.")
+    }
+
+    func test_PreviewShowsModelErrorsInsideThePanel() async {
+        let settings = TextAssistantSettings(defaults: defaults)
+        settings.outputMode = .preview
+        environment.copySelection = "text"
+        let runner = makeRunner(FakeProvider { _ in throw TextAssistantError.rateLimited }, settings: settings)
+
+        runner.run(.improve)
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(preview.failures, [TextAssistantError.rateLimited.errorDescription!])
+        XCTAssertEqual(pasteboard.snapshot(), original)
+    }
+
+    func test_CancellingThePreviewWhileWorkingStopsTheRun() async {
+        let settings = TextAssistantSettings(defaults: defaults)
+        settings.outputMode = .preview
+        environment.copySelection = "text"
+        let provider = FakeProvider { _ in
+            try await Task.sleep(for: .seconds(5))
+            return "slow"
+        }
+        let runner = makeRunner(provider, settings: settings)
+        runner.run(.improve)
+        await waitUntil { provider.calls == 1 }
+
+        preview.onCancel?()
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(environment.pasted, [])
+        XCTAssertEqual(pasteboard.snapshot(), original)
+        XCTAssertFalse(runner.isRunning)
+    }
+
     func test_QuickActionsDefaultWithoutShortcutsAndPersist() {
         let settings = TextAssistantSettings(defaults: defaults)
         XCTAssertEqual(settings.actions.map { $0.title(in: .defaults) },
@@ -295,6 +384,8 @@ final class TextAssistantRunnerTests: XCTestCase {
         XCTAssertEqual(settings.effectiveModel, "", "Empty lets OpenCode pick a signed-in default")
         XCTAssertEqual(settings.maxLength, 8_000)
         XCTAssertEqual(settings.timeoutSeconds, 30)
+        XCTAssertEqual(settings.outputMode, .replace, "Replace is the default output")
+        XCTAssertEqual(settings.claudeCodeModel, "haiku")
         settings.openCodeModel = "opencode/claude-haiku-4-5"
         settings.openRouterModel = " google/gemini-3.1-flash-lite "
         settings.maxLength = 16_000
@@ -316,12 +407,13 @@ final class TextAssistantRunnerTests: XCTestCase {
         ))
     }
 
-    private func makeRunner(_ provider: FakeProvider, settings: TextAssistantSettings? = nil) -> TextAssistantRunner {
+    private func makeRunner(_ provider: any TextProvider, settings: TextAssistantSettings? = nil) -> TextAssistantRunner {
         TextAssistantRunner(
             settings: settings ?? TextAssistantSettings(defaults: defaults),
             configStore: configStore,
             bridge: bridge(),
             feedback: feedback,
+            preview: preview,
             makeProvider: { _ in provider }
         )
     }
@@ -387,6 +479,7 @@ private final class FakeEnvironment: SelectionEnvironment {
     var secureInput = false
     var frontmostPID: pid_t = 42
     var axSelection: String?
+    var axEditable: Bool?
     /// What the app puts on the clipboard for ⌘C; nil means nothing is selected.
     var copySelection: String?
     var onPaste: ((FakePasteboard) -> Void)?
@@ -398,7 +491,7 @@ private final class FakeEnvironment: SelectionEnvironment {
     var isAccessibilityTrusted: Bool { trusted }
     var isSecureInputEnabled: Bool { secureInput }
     func frontmostAppPID() -> pid_t? { frontmostPID }
-    func accessibilitySelectedText() -> String? { axSelection }
+    func accessibilitySelection() -> (text: String, isEditable: Bool?)? { axSelection.map { ($0, axEditable) } }
     func waitForModifierRelease(timeout: TimeInterval) async {}
 
     func post(_ key: CommandKey) {
@@ -442,4 +535,48 @@ private final class RecordingFeedback: TextAssistantFeedback {
 
 private extension TextAction {
     static let improve = TextAction.defaults[0]
+}
+
+private struct StreamingProvider: TextProvider {
+    let pieces: [String]
+
+    func complete(_ request: TextCompletionRequest) async throws -> String { pieces.joined() }
+
+    func stream(_ request: TextCompletionRequest, onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
+        var text = ""
+        for piece in pieces {
+            text += piece
+            onPartial(text)
+            await Task.yield()
+        }
+        return text
+    }
+}
+
+@MainActor
+private final class RecordingPreview: TextAssistantPreviewing {
+    var onCancel: (() -> Void)?
+    var decision: PreviewDecision = .replace
+    private(set) var began: [String] = []
+    private(set) var canReplace: Bool?
+    private(set) var updates: [String] = []
+    private(set) var finished: [String] = []
+    private(set) var failures: [String] = []
+
+    func begin(title: String, canReplace: Bool) {
+        began.append(title)
+        self.canReplace = canReplace
+    }
+
+    func update(_ text: String) { updates.append(text) }
+
+    func finish(_ text: String) async -> PreviewDecision {
+        // Let streamed updates land first, as they do on screen.
+        for _ in 0..<5 { await Task.yield() }
+        finished.append(text)
+        return decision
+    }
+
+    func fail(_ message: String) { failures.append(message) }
+    func dismiss() {}
 }

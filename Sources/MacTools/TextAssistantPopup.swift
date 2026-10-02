@@ -319,7 +319,7 @@ struct PopupView: View {
                 Text(snippet)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(2, reservesSpace: true)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

@@ -53,29 +53,19 @@ final class OpenCodeServer: ObservableObject {
 
     // MARK: Locating OpenCode
 
-    /// Finds the `opencode` command where installers put it, then through a login shell.
+    /// Finds `opencode` the way the login shell does, then where installers put it.
     func locate() async {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
+        let found = await ShellCommand.locate("opencode", candidates: [
             "/opt/homebrew/bin/opencode", "/usr/local/bin/opencode", "\(home)/.opencode/bin/opencode",
             "\(home)/.local/bin/opencode", "\(home)/.bun/bin/opencode", "\(home)/.npm-global/bin/opencode",
-        ]
-        let shell = await Self.loginShellLookup()
-        shellPath = shell.path
-        let found = candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? shell.opencode
-        let url = found.map { URL(fileURLWithPath: $0) }
-        executable = .some(url)
+        ])
+        shellPath = found.path
+        executable = .some(found.url)
         version = nil
-        if let url { version = await Self.run(url, ["--version"], timeout: 10)?.trimmingCharacters(in: .whitespacesAndNewlines) }
-    }
-
-    private static func loginShellLookup() async -> (opencode: String?, path: String?) {
-        let marker = "__MACTOOLS__"
-        let script = "echo \(marker)$(command -v opencode); echo \(marker)$PATH"
-        guard let output = await run(URL(fileURLWithPath: "/bin/zsh"), ["-lic", script], timeout: 8) else { return (nil, nil) }
-        let values = output.components(separatedBy: "\n").filter { $0.hasPrefix(marker) }.map { String($0.dropFirst(marker.count)) }
-        let opencode = values.first.flatMap { $0.hasPrefix("/") ? $0 : nil }
-        return (opencode, values.count > 1 ? values[1] : nil)
+        if let url = found.url, let result = await ShellCommand.run(url, ["--version"], timeout: 10), result.status == 0 {
+            version = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
     }
 
     // MARK: Lifecycle
@@ -247,48 +237,15 @@ final class OpenCodeServer: ObservableObject {
     /// Opens Terminal with `opencode auth login`, OpenCode's own provider sign-in.
     func openSignIn() {
         guard let executable = executable ?? nil else { return }
-        let script = FileManager.default.temporaryDirectory.appending(path: "Mac Tools – OpenCode Sign In.command")
-        let quoted = "'" + executable.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-        let contents = """
-        #!/bin/zsh
-        clear
-        echo "Sign in to a provider for OpenCode. Mac Tools Text Assistant uses the same sign-ins."
-        echo
-        \(quoted) auth login
-        echo
-        echo "Done. Return to Mac Tools Settings and click Refresh."
-        """
         do {
-            try contents.write(to: script, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-            NSWorkspace.shared.open(script)
+            try ShellCommand.openInTerminal(
+                title: "OpenCode Sign In",
+                intro: "Sign in to a provider for OpenCode. Mac Tools Text Assistant uses the same sign-ins.",
+                command: ShellCommand.quoted(executable.path) + " auth login",
+                outro: "Done. Return to Mac Tools Settings and click Refresh."
+            )
         } catch {
             modelsError = error.localizedDescription
-        }
-    }
-
-    // MARK: Helpers
-
-    /// Runs a short command and returns its output, or nil on failure or timeout.
-    nonisolated private static func run(_ executable: URL, _ arguments: [String], timeout: TimeInterval) async -> String? {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = executable
-            process.arguments = arguments
-            let output = Pipe()
-            process.standardOutput = output
-            process.standardError = FileHandle.nullDevice
-            process.standardInput = FileHandle.nullDevice
-            let once = ResumeOnce(continuation)
-            process.terminationHandler = { ended in
-                let data = output.fileHandleForReading.readDataToEndOfFile()
-                once.resume(ended.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil)
-            }
-            do { try process.run() } catch { once.resume(nil); return }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if process.isRunning { process.terminate() }
-                once.resume(nil)
-            }
         }
     }
 }
@@ -344,20 +301,5 @@ private final class LaunchOutputReader: @unchecked Sendable {
                 pending?.resume(returning: nil)
             }
         }
-    }
-}
-
-private final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<String?, Never>?
-
-    init(_ continuation: CheckedContinuation<String?, Never>) { self.continuation = continuation }
-
-    func resume(_ value: String?) {
-        let pending: CheckedContinuation<String?, Never>? = lock.withLock {
-            defer { continuation = nil }
-            return continuation
-        }
-        pending?.resume(returning: value)
     }
 }

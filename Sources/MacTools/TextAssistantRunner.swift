@@ -26,6 +26,7 @@ final class TextAssistantRunner: ObservableObject {
     private let configStore: TextAssistantConfigStore
     private let bridge: TextSelectionBridge
     private let feedback: TextAssistantFeedback
+    private let preview: TextAssistantPreviewing
     private let makeProvider: @MainActor (TextAssistantSettings) -> TextProvider
     private var current: Task<Void, Never>?
     private var generation = 0
@@ -38,13 +39,16 @@ final class TextAssistantRunner: ObservableObject {
         configStore: TextAssistantConfigStore,
         bridge: TextSelectionBridge,
         feedback: TextAssistantFeedback,
+        preview: TextAssistantPreviewing,
         makeProvider: @escaping @MainActor (TextAssistantSettings) -> TextProvider
     ) {
         self.settings = settings
         self.configStore = configStore
         self.bridge = bridge
         self.feedback = feedback
+        self.preview = preview
         self.makeProvider = makeProvider
+        preview.onCancel = { [weak self] in self?.cancel() }
     }
 
     func run(_ action: TextAction) {
@@ -109,6 +113,7 @@ final class TextAssistantRunner: ObservableObject {
         feedback.show(.working(mode.progress ?? "\(mode.name)…"))
 
         var result: String?
+        var previewing = false
         do {
             let selection: CapturedSelection
             if let captured { selection = captured } else { selection = try await bridge.capture() }
@@ -122,28 +127,60 @@ final class TextAssistantRunner: ObservableObject {
                 styleSamples: configStore.styleSamples,
                 model: modelOverride.isEmpty ? settings.effectiveModel : modelOverride
             )
-            let raw = try await makeProvider(settings).complete(request)
+            let provider = makeProvider(settings)
+
+            // Read-only text (a web page) can't take a paste, so its result is shown to copy.
+            previewing = settings.outputMode == .preview || selection.isEditable == false
+            let raw: String
+            if previewing {
+                feedback.hide()
+                preview.begin(title: "\(mode.name) · \(tone.name)", canReplace: selection.isEditable != false)
+                raw = try await provider.stream(request) { [weak self] partial in
+                    Task { @MainActor in
+                        guard let self, run == self.generation else { return }
+                        self.preview.update(TextAssistantOutput.reconcile(partial, original: selection.text))
+                    }
+                }
+            } else {
+                raw = try await provider.complete(request)
+            }
             try Task.checkCancellation()
             let output = TextAssistantOutput.reconcile(raw, original: selection.text)
             result = output
             lastResult = output
-            guard output != selection.text else {
+
+            if previewing {
+                switch await preview.finish(output) {
+                case .cancel:
+                    return
+                case .copy:
+                    bridge.leaveOnClipboard(output)
+                    feedback.show(.success("Copied"))
+                    return
+                case .replace:
+                    // Let the edited app take the keyboard back before pasting into it.
+                    await uncancellableSleep(0.15)
+                }
+            } else if output == selection.text {
                 feedback.show(.success("Already looks good"))
                 return
             }
             try await bridge.replace(selection, with: output)
             feedback.show(.success("Done"))
         } catch is CancellationError {
-            // A newer run owns the HUD now.
-            if run == generation { feedback.hide() }
+            // A newer run owns the HUD and the preview now.
+            if run == generation {
+                feedback.hide()
+                if previewing { preview.dismiss() }
+            }
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            var shown = message
             if let result {
                 bridge.leaveOnClipboard(result)
-                feedback.show(.failure("\(message) The result is on the clipboard; press ⌘V to paste it."))
-            } else {
-                feedback.show(.failure(message))
+                shown = "\(message) The result is on the clipboard; press ⌘V to paste it."
             }
+            if previewing, result == nil { preview.fail(shown) } else { feedback.show(.failure(shown)) }
             if (error as? TextAssistantError) == .accessibilityNotTrusted { onAccessibilityMissing?() }
         }
     }

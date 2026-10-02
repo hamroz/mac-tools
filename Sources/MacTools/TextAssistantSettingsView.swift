@@ -9,6 +9,7 @@ struct TextAssistantSettingsView: View {
     @ObservedObject var configStore: TextAssistantConfigStore
     @ObservedObject var permission: AccessibilityPermission
     @ObservedObject var openCode: OpenCodeServer
+    @ObservedObject var claudeCode: ClaudeCodeTool
     @ObservedObject var openRouterCatalog: OpenRouterCatalog
     @ObservedObject var setupCheck: TextAssistantSetupCheck
     var keychain = KeychainStore.openRouterKey
@@ -100,6 +101,7 @@ struct TextAssistantSettingsView: View {
             switch settings.provider {
             case .openCode: openCodeRows
             case .openRouter: openRouterRows
+            case .claudeCode: claudeCodeRows
             }
         } header: {
             Text("Model")
@@ -111,6 +113,9 @@ struct TextAssistantSettingsView: View {
             case .openRouter:
                 Text("Create a key at openrouter.ai/keys. It is stored only in your Keychain.")
                     .settingsFootnote()
+            case .claudeCode:
+                Text("Runs “claude -p” with your Claude Code sign-in and plan, without tools or saved sessions. Each run starts Claude Code, which adds a few seconds; OpenCode is faster. The Claude desktop app’s sign-in is separate: sign in once with Sign In….")
+                    .settingsFootnote()
             }
         }
         .task(id: settings.provider) {
@@ -120,7 +125,23 @@ struct TextAssistantSettingsView: View {
                 if openCode.isInstalled, openCode.modelGroups.isEmpty { await openCode.refreshModels() }
             case .openRouter:
                 await openRouterCatalog.loadIfNeeded()
+            case .claudeCode:
+                if claudeCode.executable == nil { await claudeCode.refresh() }
             }
+        }
+
+        Section {
+            Picker("After a run", selection: $settings.outputMode) {
+                ForEach(TextAssistantOutputMode.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("Output")
+        } footer: {
+            Text(settings.outputMode == .replace
+                 ? "The result replaces the selection right away. Text that can’t be edited, like a web page, opens in the preview so you can copy the result."
+                 : "The result streams into a panel next to the pointer: Return replaces the selection, ⌘C copies the result, Esc cancels.")
+                .settingsFootnote()
         }
 
         Section {
@@ -251,6 +272,50 @@ struct TextAssistantSettingsView: View {
     private var automaticOpenCodeTitle: String {
         guard let model = openCode.modelGroups.preferredDefault(OpenCodeAPI.preferredModels) else { return "Automatic" }
         return "Automatic · \(model.name)"
+    }
+
+    // MARK: Claude Code
+
+    @ViewBuilder private var claudeCodeRows: some View {
+        LabeledContent("Claude Code") {
+            HStack(spacing: 8) {
+                claudeCodeStatus
+                if claudeCode.isInstalled {
+                    if claudeCode.isSignedIn != true {
+                        Button("Sign In…") { claudeCode.openSignIn() }
+                            .help("Opens Terminal with “claude auth login”")
+                    }
+                    Button {
+                        Task { await claudeCode.refresh() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .help("Check the sign-in again")
+                    .disabled(claudeCode.isChecking)
+                } else if claudeCode.executable != nil {
+                    Link("Get Claude Code", destination: URL(string: "https://claude.com/claude-code")!)
+                }
+            }
+        }
+        Picker("Model", selection: $settings.claudeCodeModel) {
+            ForEach(ClaudeCodeCLI.models, id: \.0) { Text($0.1).tag($0.0) }
+        }
+    }
+
+    @ViewBuilder private var claudeCodeStatus: some View {
+        if claudeCode.executable == nil || claudeCode.isChecking {
+            ProgressView().controlSize(.small)
+        } else if !claudeCode.isInstalled {
+            Label("Not installed", systemImage: "xmark.circle.fill").foregroundStyle(.secondary)
+        } else if claudeCode.isSignedIn == true {
+            Label(claudeCode.version.map { "v\($0) · signed in" } ?? "Signed in", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .fixedSize()
+        } else {
+            Label("Not signed in", systemImage: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+                .fixedSize()
+        }
     }
 
     // MARK: OpenRouter

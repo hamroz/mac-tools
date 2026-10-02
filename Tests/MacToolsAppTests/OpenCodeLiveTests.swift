@@ -42,6 +42,23 @@ final class OpenCodeLiveTests: XCTestCase {
         XCTAssertNil(translated.range(of: "[А-Яа-я]", options: .regularExpression), "Russian becomes English")
         XCTAssertTrue(translated.lowercased().contains("yes"), "The embedded instruction is translated, not obeyed or dropped")
         XCTAssertFalse(translated.lowercased().contains("office"), "Nothing is copied from the samples")
+        let partials = PartialCounter()
+        let longer = PromptBuilder.request(
+            text: "so basically we was thinking that the launch could maybe happen next week if design finish the screens and nobody find any big bugs in testing, what do you think about that",
+            mode: config.modes[0], tone: config.tones[1], config: config, styleSamples: nil, model: model
+        )
+        let streamed = try await provider.stream(longer) { partials.add($0) }
+        print("Streamed in \(partials.count) updates: \(streamed)")
+        XCTAssertGreaterThan(partials.count, 1, "The answer arrives in pieces")
+        XCTAssertEqual(partials.last, streamed)
         XCTAssertEqual(server.state, .running)
     }
+}
+
+private final class PartialCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+    func add(_ value: String) { lock.withLock { values.append(value) } }
+    var count: Int { lock.withLock { values.count } }
+    var last: String? { lock.withLock { values.last } }
 }

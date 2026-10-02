@@ -46,13 +46,32 @@ enum TextAssistantProviderKind: String, CaseIterable, Identifiable {
     case openCode
     /// OpenRouter with an API key kept in Mac Tools' Keychain item.
     case openRouter
+    /// `claude -p` with the user's Claude Code sign-in. Off unless chosen.
+    case claudeCode
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .openCode: "OpenCode"
-        case .openRouter: "OpenRouter API key"
+        case .openRouter: "OpenRouter"
+        case .claudeCode: "Claude Code"
+        }
+    }
+}
+
+enum TextAssistantOutputMode: String, CaseIterable, Identifiable {
+    /// Paste the result over the selection right away.
+    case replace
+    /// Show the result first: Return replaces, ⌘C copies, Esc cancels.
+    case preview
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .replace: "Replace"
+        case .preview: "Preview first"
         }
     }
 }
@@ -67,6 +86,9 @@ final class TextAssistantSettings: ObservableObject {
     @Published var openCodeModel: String { didSet { defaults.set(openCodeModel, forKey: Keys.openCodeModel) } }
     /// An OpenRouter model ID; empty means the default.
     @Published var openRouterModel: String { didSet { defaults.set(openRouterModel, forKey: Keys.openRouterModel) } }
+    /// A Claude Code model alias: haiku, sonnet, or opus.
+    @Published var claudeCodeModel: String { didSet { defaults.set(claudeCodeModel, forKey: Keys.claudeCodeModel) } }
+    @Published var outputMode: TextAssistantOutputMode { didSet { defaults.set(outputMode.rawValue, forKey: Keys.outputMode) } }
     @Published var maxLength: Int { didSet { defaults.set(maxLength, forKey: Keys.maxLength) } }
     @Published var timeoutSeconds: Int { didSet { defaults.set(timeoutSeconds, forKey: Keys.timeout) } }
     @Published var actions: [TextAction] {
@@ -87,6 +109,8 @@ final class TextAssistantSettings: ObservableObject {
         static let provider = "textAssistant.provider"
         static let openCodeModel = "textAssistant.openCodeModel"
         static let openRouterModel = "textAssistant.model"
+        static let claudeCodeModel = "textAssistant.claudeCodeModel"
+        static let outputMode = "textAssistant.outputMode"
         static let maxLength = "textAssistant.maxLength"
         static let timeout = "textAssistant.timeoutSeconds"
         static let actions = "textAssistant.actions"
@@ -103,6 +127,8 @@ final class TextAssistantSettings: ObservableObject {
         provider = defaults.string(forKey: Keys.provider).flatMap(TextAssistantProviderKind.init(rawValue:)) ?? .openCode
         openCodeModel = defaults.string(forKey: Keys.openCodeModel) ?? ""
         openRouterModel = defaults.string(forKey: Keys.openRouterModel) ?? OpenRouterAPI.defaultModel
+        claudeCodeModel = defaults.string(forKey: Keys.claudeCodeModel) ?? ClaudeCodeCLI.defaultModel
+        outputMode = defaults.string(forKey: Keys.outputMode).flatMap(TextAssistantOutputMode.init(rawValue:)) ?? .replace
         let length = defaults.integer(forKey: Keys.maxLength)
         maxLength = Self.maxLengthChoices.contains(length) ? length : 8_000
         let timeout = defaults.integer(forKey: Keys.timeout)
@@ -144,6 +170,8 @@ final class TextAssistantSettings: ObservableObject {
         case .openRouter:
             let trimmed = openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? OpenRouterAPI.defaultModel : trimmed
+        case .claudeCode:
+            return claudeCodeModel.isEmpty ? ClaudeCodeCLI.defaultModel : claudeCodeModel
         }
     }
 }

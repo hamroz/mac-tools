@@ -80,8 +80,9 @@ protocol SelectionEnvironment {
     var isAccessibilityTrusted: Bool { get }
     var isSecureInputEnabled: Bool { get }
     func frontmostAppPID() -> pid_t?
-    /// The focused element's selection through Accessibility, when the app exposes it.
-    func accessibilitySelectedText() -> String?
+    /// The focused element's selection through Accessibility, when the app exposes
+    /// it, and whether that element can be edited (nil when unknown).
+    func accessibilitySelection() -> (text: String, isEditable: Bool?)?
     /// Waits until the hotkey's modifier keys are up, so ⌘C isn't read as ⌥⌘C.
     func waitForModifierRelease(timeout: TimeInterval) async
     func post(_ key: CommandKey)
@@ -95,7 +96,7 @@ struct SystemSelectionEnvironment: SelectionEnvironment {
 
     func frontmostAppPID() -> pid_t? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
 
-    func accessibilitySelectedText() -> String? {
+    func accessibilitySelection() -> (text: String, isEditable: Bool?)? {
         let systemWide = AXUIElementCreateSystemWide()
         // A hung app must not stall the run; ⌘C is the fallback anyway.
         AXUIElementSetMessagingTimeout(systemWide, 0.25)
@@ -105,8 +106,28 @@ struct SystemSelectionEnvironment: SelectionEnvironment {
         let element = focused as! AXUIElement
         AXUIElementSetMessagingTimeout(element, 0.25)
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &value) == .success else { return nil }
-        return value as? String
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &value) == .success,
+              let text = value as? String else { return nil }
+        return (text, Self.isEditable(element))
+    }
+
+    /// Only clear cases count as read-only, a web page or a label, since a wrong
+    /// "read-only" would stop pastes that work.
+    private static func isEditable(_ element: AXUIElement) -> Bool? {
+        func attribute(_ name: String) -> CFTypeRef? {
+            var value: CFTypeRef?
+            return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        }
+        let role = attribute(kAXRoleAttribute) as? String ?? ""
+        if [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXSearchField"].contains(role) { return true }
+        var settable: DarwinBoolean = false
+        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue {
+            return true
+        }
+        // Web content inside an editable region (Chrome, Safari) names its editable ancestor.
+        if attribute("AXEditableAncestor") != nil { return true }
+        if role == "AXWebArea" || role == kAXStaticTextRole { return false }
+        return nil
     }
 
     func waitForModifierRelease(timeout: TimeInterval) async {
@@ -149,6 +170,8 @@ struct CapturedSelection: Equatable {
     let text: String
     let appPID: pid_t?
     let method: Method
+    /// false when the selection is known to be read-only, such as text on a web page.
+    var isEditable: Bool? = nil
 }
 
 /// Reads the selection in the frontmost app and writes a result over it.
@@ -181,8 +204,8 @@ final class TextSelectionBridge {
         guard !environment.isSecureInputEnabled else { throw TextAssistantError.secureInput }
         let pid = environment.frontmostAppPID()
 
-        if let text = environment.accessibilitySelectedText(), !text.isBlank {
-            return CapturedSelection(text: text, appPID: pid, method: .accessibility)
+        if let selection = environment.accessibilitySelection(), !selection.text.isBlank {
+            return CapturedSelection(text: selection.text, appPID: pid, method: .accessibility, isEditable: selection.isEditable)
         }
 
         await environment.waitForModifierRelease(timeout: timing.modifierRelease)

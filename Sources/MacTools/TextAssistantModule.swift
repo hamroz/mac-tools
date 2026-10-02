@@ -23,6 +23,8 @@ final class TextAssistantModule: NSObject, ToolModule {
     let openCode: OpenCodeServer
     private let openRouterCatalog = OpenRouterCatalog()
     private let hud: TextAssistantHUD
+    private let preview = TextAssistantPreview()
+    let claudeCode = ClaudeCodeTool()
     private let popup = TextAssistantPopup()
     private var popupTask: Task<Void, Never>?
     private var refreshMenu: (() -> Void)?
@@ -40,11 +42,14 @@ final class TextAssistantModule: NSObject, ToolModule {
         self.openCode = openCode
         let hud = TextAssistantHUD()
         self.hud = hud
+        let claudeCode = claudeCode
         let makeProvider: @MainActor (TextAssistantSettings) -> TextProvider = { settings in
             let timeout = TimeInterval(settings.timeoutSeconds)
             switch settings.provider {
             case .openCode: return OpenCodeProvider(server: openCode, timeout: timeout)
             case .openRouter: return OpenRouterProvider(timeout: timeout)
+            // Starting Claude Code takes a few seconds on its own.
+            case .claudeCode: return ClaudeCodeProvider(tool: claudeCode, timeout: timeout + 30)
             }
         }
         runner = TextAssistantRunner(
@@ -52,10 +57,11 @@ final class TextAssistantModule: NSObject, ToolModule {
             configStore: configStore,
             bridge: TextSelectionBridge(pasteboard: SystemPasteboard(), environment: SystemSelectionEnvironment()),
             feedback: hud,
+            preview: preview,
             makeProvider: makeProvider
         )
         setupCheck = TextAssistantSetupCheck(
-            settings: settings, configStore: configStore, openCode: openCode, makeProvider: makeProvider
+            settings: settings, configStore: configStore, openCode: openCode, claudeCode: claudeCode, makeProvider: makeProvider
         )
         super.init()
         hud.onOpenSettings = { [weak self] in self?.openSettings?() }
@@ -95,6 +101,7 @@ final class TextAssistantModule: NSObject, ToolModule {
         KeyboardShortcuts.removeHandler(for: .textAssistantPopup)
         popupTask?.cancel()
         popup.close()
+        preview.dismiss()
         configStore.stop()
         runner.cancel()
         hud.hide()
@@ -130,7 +137,7 @@ final class TextAssistantModule: NSObject, ToolModule {
     func makeSettingsView() -> AnyView {
         AnyView(TextAssistantSettingsView(
             settings: settings, configStore: configStore, permission: .shared,
-            openCode: openCode, openRouterCatalog: openRouterCatalog, setupCheck: setupCheck
+            openCode: openCode, claudeCode: claudeCode, openRouterCatalog: openRouterCatalog, setupCheck: setupCheck
         ))
     }
 
