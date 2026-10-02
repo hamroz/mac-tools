@@ -23,8 +23,15 @@ final class KeyComboTests: XCTestCase {
         XCTAssertEqual(KeyCombo(keyCode: 45, modifiers: [.control, .option]).displayString, "⌃⌥N")
         XCTAssertEqual(KeyCombo(keyCode: 49, modifiers: [.option]).displayString, "⌥Space")
         XCTAssertEqual(KeyCombo(keyCode: 123, modifiers: [.control]).displayString, "⌃←")
-        XCTAssertEqual(KeyCombo(keyCode: 122, modifiers: [.control, .function]).displayString, "fn⌃F1")
+        XCTAssertEqual(KeyCombo(keyCode: 12, modifiers: [.function]).displayString, "fnQ")
         XCTAssertEqual(KeyCombo(keyCode: 20, modifiers: [.command, .shift, .control]).displayString, "⌃⇧⌘3")
+    }
+
+    func test_implicitFunctionFlagIsDropped() {
+        // Cocoa reports arrows and F-keys with the function flag; Carbon sources don't.
+        XCTAssertEqual(KeyCombo(keyCode: 126, modifiers: [.control, .function]), KeyCombo(keyCode: 126, modifiers: [.control]))
+        XCTAssertEqual(KeyCombo(keyCode: 122, modifiers: [.control, .function]).displayString, "⌃F1")
+        XCTAssertEqual(KeyCombo(keyCode: 12, modifiers: [.function]).modifiers, [.function])
     }
 
     func test_searchTextHasWords() {

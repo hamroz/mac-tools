@@ -67,9 +67,10 @@ public struct KeyCombo: Hashable, Codable, Sendable, Comparable, CustomStringCon
     public let keyCode: UInt16
     public let modifiers: ShortcutModifiers
 
+    /// Drops the function flag Cocoa adds to arrows and F-keys, so the same key matches across sources.
     public init(keyCode: UInt16, modifiers: ShortcutModifiers) {
         self.keyCode = keyCode
-        self.modifiers = modifiers
+        self.modifiers = KeyNames.impliesFunctionFlag(keyCode) ? modifiers.subtracting(.function) : modifiers
     }
 
     /// Parses an `NSUserKeyEquivalents` value such as `@$k` (⇧⌘K).
@@ -162,6 +163,11 @@ public enum KeyNames {
     static func spokenName(for keyCode: UInt16) -> String {
         if let special = special[keyCode] { return special.spoken }
         return name(for: keyCode).lowercased()
+    }
+
+    /// Keys Cocoa always reports with the function flag set.
+    static func impliesFunctionFlag(_ keyCode: UInt16) -> Bool {
+        functionKeys.contains(keyCode) || [114, 115, 116, 117, 119, 121, 123, 124, 125, 126].contains(keyCode)
     }
 
     public static func isFunctionKey(_ keyCode: UInt16) -> Bool {
