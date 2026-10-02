@@ -28,7 +28,7 @@ final class ShortcutsSettings: ObservableObject {
 enum MacToolsShortcutSource {
     static func entries(
         stickiesPreset: HotKeyPreset?,
-        textAssistant: KeyboardShortcuts.Shortcut?,
+        textAssistant: [(shortcut: KeyboardShortcuts.Shortcut, action: String)],
         shortcutsWindow: KeyboardShortcuts.Shortcut?
     ) -> [ShortcutEntry] {
         var entries: [ShortcutEntry] = []
@@ -43,8 +43,8 @@ enum MacToolsShortcutSource {
             }
             entries.append(entry(KeyCombo(keyCode: UInt16(preset.keyCode), modifiers: modifiers), "New Note", "Desktop Stickies"))
         }
-        if let shortcut = textAssistant, let combo = combo(shortcut) {
-            entries.append(entry(combo, "Improve selected text", "Text Assistant"))
+        for (shortcut, action) in textAssistant {
+            if let combo = combo(shortcut) { entries.append(entry(combo, action, "Text Assistant")) }
         }
         if let shortcut = shortcutsWindow, let combo = combo(shortcut) {
             entries.append(entry(combo, "Show Shortcuts", "Shortcuts"))

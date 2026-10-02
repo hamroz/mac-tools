@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchAtLoginManager = LaunchAtLoginManager()
     private var settingsWindow: SettingsWindowController?
     private var stickies: DesktopStickiesModule?
+    private var textAssistant: TextAssistantModule?
     /// Text Assistant and Shortcuts hotkeys that were on before the Shortcuts checker paused them.
     private var pausedShortcutNames: [KeyboardShortcuts.Name] = []
     private var hotKeysPaused = false
@@ -34,7 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.macToolsShortcutEntries() ?? []
         }))
         shortcuts.pauseHotKeys = { [weak self] paused in self?.setHotKeysPaused(paused) }
-        let registry = ToolRegistry(modules: [stickies, AIUsageModule(), TextAssistantModule(), shortcuts])
+        let textAssistant = TextAssistantModule()
+        self.textAssistant = textAssistant
+        let registry = ToolRegistry(modules: [stickies, AIUsageModule(), textAssistant, shortcuts])
         registry.onChange = { [weak self] in self?.rebuildStatusMenu() }
         registry.onOpenSettings = { [weak self] id in self?.showSettings(.tool(id)) }
         self.registry = registry
@@ -126,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let registry else { return [] }
         return MacToolsShortcutSource.entries(
             stickiesPreset: registry.isEnabled("desktop-stickies") ? stickies?.hotKeyPreset : nil,
-            textAssistant: registry.isEnabled("text-assistant") ? KeyboardShortcuts.getShortcut(for: .textAssistantImprove) : nil,
+            textAssistant: registry.isEnabled("text-assistant") ? textAssistant?.shortcutEntries ?? [] : [],
             shortcutsWindow: registry.isEnabled("shortcuts") ? KeyboardShortcuts.getShortcut(for: .shortcutsShowWindow) : nil
         )
     }
@@ -137,7 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeysPaused = paused
         stickies?.setHotKeyPaused(paused)
         if paused {
-            pausedShortcutNames = Array(Self.shortcutTools.keys).filter { KeyboardShortcuts.isEnabled(for: $0) }
+            let names = [KeyboardShortcuts.Name.shortcutsShowWindow] + (textAssistant?.shortcutNames ?? [])
+            pausedShortcutNames = names.filter { KeyboardShortcuts.isEnabled(for: $0) }
             KeyboardShortcuts.disable(pausedShortcutNames)
         } else {
             let enabledTools = Set(registry?.enabledModules.map(\.descriptor.id) ?? [])
@@ -146,16 +150,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Recorder-based global shortcuts and the tool that owns each.
-    private static let shortcutTools: [KeyboardShortcuts.Name: String] = [
-        .textAssistantImprove: "text-assistant",
-        .shortcutsShowWindow: "shortcuts",
-    ]
+    /// The tool that owns a recorder-based global shortcut. Text Assistant has one per quick action.
+    private static func tool(owning name: KeyboardShortcuts.Name) -> String? {
+        if name == .shortcutsShowWindow { return "shortcuts" }
+        return name.rawValue.hasPrefix("textAssistant.") ? "text-assistant" : nil
+    }
 
     /// A tool switched off while hotkeys were paused has removed its handler; registering its shortcut
     /// again would swallow the keys system-wide with nothing listening.
     static func namesToResume(_ names: [KeyboardShortcuts.Name], enabledTools: Set<String>) -> [KeyboardShortcuts.Name] {
-        names.filter { name in shortcutTools[name].map(enabledTools.contains) ?? false }
+        names.filter { name in tool(owning: name).map(enabledTools.contains) ?? false }
     }
 
     /// Clears preferences left behind by the removed Menu Bar Organizer.

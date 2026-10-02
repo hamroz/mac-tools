@@ -9,7 +9,7 @@ final class TextAssistantModule: NSObject, ToolModule {
     let descriptor = ToolDescriptor(
         id: "text-assistant",
         name: "Text Assistant",
-        summary: "Improves the text you’ve selected in any app and puts the result right back in place.",
+        summary: "Improves or translates the text you’ve selected in any app and puts the result right back in place.",
         symbolName: "wand.and.stars",
         tint: .teal
     )
@@ -17,19 +17,29 @@ final class TextAssistantModule: NSObject, ToolModule {
     var openSettings: (() -> Void)?
 
     let settings: TextAssistantSettings
+    let configStore: TextAssistantConfigStore
     let runner: TextAssistantRunner
     let openCode: OpenCodeServer
     private let openRouterCatalog = OpenRouterCatalog()
     private let hud: TextAssistantHUD
+    private var refreshMenu: (() -> Void)?
+    private var registeredShortcuts: [KeyboardShortcuts.Name] = []
+    private var observers: [AnyCancellable] = []
     private var menuObservers: [AnyCancellable] = []
 
-    init(settings: TextAssistantSettings = TextAssistantSettings(), openCode: OpenCodeServer = OpenCodeServer()) {
+    init(
+        settings: TextAssistantSettings = TextAssistantSettings(),
+        configStore: TextAssistantConfigStore = TextAssistantConfigStore(),
+        openCode: OpenCodeServer = OpenCodeServer()
+    ) {
         self.settings = settings
+        self.configStore = configStore
         self.openCode = openCode
         let hud = TextAssistantHUD()
         self.hud = hud
         runner = TextAssistantRunner(
             settings: settings,
+            configStore: configStore,
             bridge: TextSelectionBridge(pasteboard: SystemPasteboard(), environment: SystemSelectionEnvironment()),
             feedback: hud,
             makeProvider: { settings in
@@ -49,39 +59,90 @@ final class TextAssistantModule: NSObject, ToolModule {
     }
 
     func start() {
-        KeyboardShortcuts.onKeyDown(for: .textAssistantImprove) { [weak self] in
-            self?.runner.improveSelection()
-        }
+        configStore.start()
+        registerShortcuts(for: settings.actions)
+        observers = [
+            settings.$actions.dropFirst().sink { [weak self] actions in
+                self?.registerShortcuts(for: actions)
+                self?.refreshMenu?()
+            },
+            // Mode and tone names appear in the menu.
+            configStore.$config.dropFirst().removeDuplicates().sink { [weak self] _ in self?.refreshMenu?() },
+        ]
     }
 
     func stop() {
-        KeyboardShortcuts.removeHandler(for: .textAssistantImprove)
+        observers.removeAll()
+        registeredShortcuts.forEach(KeyboardShortcuts.removeHandler(for:))
+        registeredShortcuts = []
+        configStore.stop()
         runner.cancel()
         hud.hide()
         openCode.stop()
     }
 
-    func makeMenuItems() -> [NSMenuItem] {
-        let improve = NSMenuItem(title: "Improve Selected Text", action: #selector(improveFromMenu), keyEquivalent: "")
-        improve.target = self
-        improve.setShortcut(for: .textAssistantImprove)
+    func setMenuRefresh(_ refresh: @escaping () -> Void) {
+        refreshMenu = refresh
+    }
 
+    func makeMenuItems() -> [NSMenuItem] {
+        var items = settings.actions.map { action in
+            let item = NSMenuItem(title: title(for: action), action: #selector(runFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = action.id
+            item.setShortcut(for: action.shortcutName)
+            return item
+        }
         let copyLast = NSMenuItem(title: "Copy Last Result", action: #selector(copyLastResult), keyEquivalent: "")
         copyLast.target = self
         menuObservers = [runner.$lastResult.sink { [weak copyLast] result in copyLast?.isHidden = result == nil }]
-        return [improve, copyLast]
+        items.append(copyLast)
+        return items
     }
 
     func makeSettingsView() -> AnyView {
         AnyView(TextAssistantSettingsView(
-            settings: settings, permission: .shared, openCode: openCode, openRouterCatalog: openRouterCatalog
+            settings: settings, configStore: configStore, permission: .shared,
+            openCode: openCode, openRouterCatalog: openRouterCatalog
         ))
     }
 
+    /// "Improve · My style", or the IDs when config.json no longer has them.
+    func title(for action: TextAction) -> String {
+        action.title(in: configStore.config)
+    }
+
+    /// Recorded quick-action shortcuts, for the Shortcuts tool.
+    var shortcutEntries: [(shortcut: KeyboardShortcuts.Shortcut, action: String)] {
+        settings.actions.compactMap { action in
+            KeyboardShortcuts.getShortcut(for: action.shortcutName).map { ($0, title(for: action)) }
+        }
+    }
+
+    var shortcutNames: [KeyboardShortcuts.Name] { settings.actions.map(\.shortcutName) }
+
+    private func registerShortcuts(for actions: [TextAction]) {
+        let names = actions.map(\.shortcutName)
+        for name in registeredShortcuts where !names.contains(name) {
+            KeyboardShortcuts.removeHandler(for: name)
+            // A removed action must not leave its shortcut stored or registered.
+            KeyboardShortcuts.reset(name)
+        }
+        for name in names where !registeredShortcuts.contains(name) {
+            KeyboardShortcuts.onKeyDown(for: name) { [weak self] in
+                guard let self, let action = self.settings.actions.first(where: { $0.shortcutName == name }) else { return }
+                self.runner.run(action)
+            }
+        }
+        registeredShortcuts = names
+    }
+
     /// The status menu never activates Mac Tools, so the selection stays in the frontmost app.
-    @objc private func improveFromMenu() {
+    @objc private func runFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let action = settings.actions.first(where: { $0.id == id }) else { return }
         // Let the menu finish closing before keystrokes go to the app.
-        DispatchQueue.main.async { [weak self] in self?.runner.improveSelection() }
+        DispatchQueue.main.async { [weak self] in self?.runner.run(action) }
     }
 
     @objc private func copyLastResult() {

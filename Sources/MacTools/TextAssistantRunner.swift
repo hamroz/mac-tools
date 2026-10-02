@@ -23,6 +23,7 @@ final class TextAssistantRunner: ObservableObject {
     @Published private(set) var lastResult: String?
 
     private let settings: TextAssistantSettings
+    private let configStore: TextAssistantConfigStore
     private let bridge: TextSelectionBridge
     private let feedback: TextAssistantFeedback
     private let makeProvider: @MainActor (TextAssistantSettings) -> TextProvider
@@ -34,17 +35,23 @@ final class TextAssistantRunner: ObservableObject {
 
     init(
         settings: TextAssistantSettings,
+        configStore: TextAssistantConfigStore,
         bridge: TextSelectionBridge,
         feedback: TextAssistantFeedback,
         makeProvider: @escaping @MainActor (TextAssistantSettings) -> TextProvider
     ) {
         self.settings = settings
+        self.configStore = configStore
         self.bridge = bridge
         self.feedback = feedback
         self.makeProvider = makeProvider
     }
 
-    func improveSelection() {
+    func run(_ action: TextAction) {
+        run(modeID: action.modeID, toneID: action.toneID)
+    }
+
+    func run(modeID: String, toneID: String) {
         let previous = current
         previous?.cancel()
         generation += 1
@@ -53,7 +60,7 @@ final class TextAssistantRunner: ObservableObject {
             // Let the previous run finish its clipboard work before reading the selection.
             await previous?.value
             guard let self, !Task.isCancelled else { return }
-            await self.perform(run)
+            await self.perform(run, modeID: modeID, toneID: toneID)
         }
     }
 
@@ -66,10 +73,20 @@ final class TextAssistantRunner: ObservableObject {
         await current?.value
     }
 
-    private func perform(_ run: Int) async {
+    private func perform(_ run: Int, modeID: String, toneID: String) async {
+        // An edit saved a moment ago counts.
+        configStore.reloadIfChanged()
+        let config = configStore.config
+        guard let mode = config.mode(id: modeID) else {
+            return feedback.show(.failure(TextAssistantError.unknownStyle("The mode “\(modeID)” isn’t in config.json.").errorDescription!))
+        }
+        guard let tone = config.tone(id: toneID) else {
+            return feedback.show(.failure(TextAssistantError.unknownStyle("The tone “\(toneID)” isn’t in config.json.").errorDescription!))
+        }
+
         isRunning = true
         defer { if run == generation { isRunning = false } }
-        feedback.show(.working("Improving…"))
+        feedback.show(.working(mode.progress ?? "\(mode.name)…"))
 
         var result: String?
         do {
@@ -78,7 +95,12 @@ final class TextAssistantRunner: ObservableObject {
             guard length <= settings.maxLength else {
                 throw TextAssistantError.textTooLong(limit: settings.maxLength, actual: length)
             }
-            let request = TextAssistantPrompt.improveRequest(text: selection.text, model: settings.effectiveModel)
+            let modelOverride = mode.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let request = PromptBuilder.request(
+                text: selection.text, mode: mode, tone: tone, config: config,
+                styleSamples: configStore.styleSamples,
+                model: modelOverride.isEmpty ? settings.effectiveModel : modelOverride
+            )
             let raw = try await makeProvider(settings).complete(request)
             try Task.checkCancellation()
             let output = TextAssistantOutput.reconcile(raw, original: selection.text)

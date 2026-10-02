@@ -6,6 +6,7 @@ import SwiftUI
 /// Text Assistant's page in Mac Tools Settings. Returns form sections only.
 struct TextAssistantSettingsView: View {
     @ObservedObject var settings: TextAssistantSettings
+    @ObservedObject var configStore: TextAssistantConfigStore
     @ObservedObject var permission: AccessibilityPermission
     @ObservedObject var openCode: OpenCodeServer
     @ObservedObject var openRouterCatalog: OpenRouterCatalog
@@ -17,13 +18,66 @@ struct TextAssistantSettingsView: View {
 
     var body: some View {
         Section {
-            LabeledContent("Improve selected text") {
-                KeyboardShortcuts.Recorder(for: .textAssistantImprove)
+            ForEach($settings.actions) { $action in
+                QuickActionRow(action: $action, config: configStore.config) {
+                    settings.actions.removeAll { $0.id == action.id }
+                }
+            }
+            HStack {
+                Button {
+                    let config = configStore.config
+                    settings.actions.append(TextAction(
+                        modeID: config.modes.first?.id ?? "improve",
+                        toneID: config.tone(id: "my-style")?.id ?? config.tones.first?.id ?? "my-style"
+                    ))
+                } label: {
+                    Label("Add Action", systemImage: "plus")
+                }
+                Spacer()
+                if settings.actions != TextAction.defaults {
+                    Button("Restore Defaults") { settings.actions = TextAction.defaults }
+                }
             }
         } header: {
-            Text("Shortcut")
+            Text("Quick Actions")
         } footer: {
-            Text("No shortcut is set until you record one. Improve Selected Text is also in the Mac Tools menu.")
+            Text("Each action runs on the selected text from the Mac Tools menu. Shortcuts are optional; none is set until you record one.")
+                .settingsFootnote()
+        }
+
+        Section {
+            LabeledContent("Modes and tones") {
+                HStack {
+                    Text("\(configStore.config.modes.count) modes · \(configStore.config.tones.count) tones")
+                        .foregroundStyle(.secondary)
+                    Button("Edit…") { configStore.open(configStore.configURL) }
+                }
+            }
+            if let problem = configStore.problem {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("The last working version stays in use until the file is fixed.")
+                        .settingsFootnote()
+                    Button("Restore Default Modes and Tones…") { configStore.restoreDefaultConfig() }
+                }
+                .font(.callout)
+            }
+            LabeledContent("My style samples") {
+                HStack {
+                    Text(styleSummary)
+                        .foregroundStyle(.secondary)
+                    Button("Edit…") { configStore.open(configStore.styleURL) }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Show in Finder") { configStore.showInFinder() }
+            }
+        } header: {
+            Text("Modes, Tones and My Style")
+        } footer: {
+            Text("config.json holds the modes (what to do), the tones (how it should sound) and the prompts; add your own, like “Reply” or “Explain simply”. my-style.md holds samples of your own writing for the My style tone. Changes apply as soon as you save. Restoring the defaults keeps your old file as a backup.")
                 .settingsFootnote()
         }
 
@@ -213,6 +267,11 @@ struct TextAssistantSettingsView: View {
         }
     }
 
+    private var styleSummary: String {
+        guard let samples = configStore.styleSamples else { return "None yet" }
+        return "\(samples.count.formatted()) characters"
+    }
+
     private func saveKey() {
         let key = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
@@ -233,6 +292,39 @@ struct TextAssistantSettingsView: View {
             hasKey = false
         } catch {
             keyError = error.localizedDescription
+        }
+    }
+}
+
+/// One quick action: its mode, its tone, an optional shortcut, and a remove button.
+private struct QuickActionRow: View {
+    @Binding var action: TextAction
+    let config: TextAssistantConfig
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Picker("Mode", selection: $action.modeID) {
+                ForEach(config.modes) { Text($0.name).tag($0.id) }
+                if config.mode(id: action.modeID) == nil { Text("“\(action.modeID)” (missing)").tag(action.modeID) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            Picker("Tone", selection: $action.toneID) {
+                ForEach(config.tones) { Text($0.name).tag($0.id) }
+                if config.tone(id: action.toneID) == nil { Text("“\(action.toneID)” (missing)").tag(action.toneID) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            Spacer(minLength: 8)
+            KeyboardShortcuts.Recorder(for: action.shortcutName)
+            Button(action: remove) {
+                Image(systemName: "minus.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Remove this action")
+            .accessibilityLabel("Remove \(action.title(in: config))")
         }
     }
 }

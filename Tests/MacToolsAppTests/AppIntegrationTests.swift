@@ -85,15 +85,15 @@ final class AppIntegrationTests: XCTestCase {
     func test_MacToolsShortcutEntries() {
         let entries = MacToolsShortcutSource.entries(
             stickiesPreset: .controlOptionN,
-            textAssistant: KeyboardShortcuts.Shortcut(carbonKeyCode: 16, carbonModifiers: 4096 | 2048),
+            textAssistant: [(KeyboardShortcuts.Shortcut(carbonKeyCode: 16, carbonModifiers: 4096 | 2048), "Improve · My style")],
             shortcutsWindow: nil
         )
-        XCTAssertEqual(entries.map(\.action), ["New Note", "Improve selected text"])
+        XCTAssertEqual(entries.map(\.action), ["New Note", "Improve · My style"])
         XCTAssertEqual(entries.first?.combo, KeyCombo(keyCode: 45, modifiers: [.control, .option]))
         XCTAssertEqual(entries.first?.detail, "Desktop Stickies")
         XCTAssertEqual(entries.last?.combo, KeyCombo(keyCode: 16, modifiers: [.control, .option]))
         XCTAssertTrue(entries.allSatisfy { $0.source == .macTools && $0.scope == .global })
-        XCTAssertEqual(MacToolsShortcutSource.entries(stickiesPreset: nil, textAssistant: nil, shortcutsWindow: nil), [])
+        XCTAssertEqual(MacToolsShortcutSource.entries(stickiesPreset: nil, textAssistant: [], shortcutsWindow: nil), [])
     }
 
     func test_ToolsCanOpenTheirOwnSettingsPage() throws {

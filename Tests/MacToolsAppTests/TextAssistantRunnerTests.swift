@@ -10,6 +10,8 @@ final class TextAssistantRunnerTests: XCTestCase {
     private var pasteboard: FakePasteboard!
     private var environment: FakeEnvironment!
     private var feedback: RecordingFeedback!
+    private var configDirectory: URL!
+    private var configStore: TextAssistantConfigStore!
 
     private let original = PasteboardSnapshot(items: [["public.utf8-plain-text": Data("mine".utf8), "public.rtf": Data("{\\rtf1 mine}".utf8)]])
 
@@ -19,10 +21,14 @@ final class TextAssistantRunnerTests: XCTestCase {
         pasteboard = FakePasteboard(original)
         environment = FakeEnvironment(pasteboard: pasteboard)
         feedback = RecordingFeedback()
+        configDirectory = FileManager.default.temporaryDirectory.appending(path: "TextAssistantConfig-\(UUID().uuidString)")
+        configStore = TextAssistantConfigStore(directory: configDirectory)
+        configStore.reload()
     }
 
     override func tearDown() async throws {
         defaults.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: configDirectory)
     }
 
     // MARK: Capture and replace
@@ -80,7 +86,7 @@ final class TextAssistantRunnerTests: XCTestCase {
         }
         let runner = makeRunner(provider)
 
-        runner.improveSelection()
+        runner.run(.improve)
         await runner.waitUntilIdle()
 
         XCTAssertEqual(environment.pasted, ["Hello, world.\n"])
@@ -94,7 +100,7 @@ final class TextAssistantRunnerTests: XCTestCase {
         environment.copySelection = "text"
         let runner = makeRunner(FakeProvider { _ in throw TextAssistantError.invalidAPIKey })
 
-        runner.improveSelection()
+        runner.run(.improve)
         await runner.waitUntilIdle()
 
         XCTAssertEqual(environment.pasted, [])
@@ -109,7 +115,7 @@ final class TextAssistantRunnerTests: XCTestCase {
             return "Better text"
         })
 
-        runner.improveSelection()
+        runner.run(.improve)
         await runner.waitUntilIdle()
 
         XCTAssertEqual(environment.pasted, [])
@@ -125,7 +131,7 @@ final class TextAssistantRunnerTests: XCTestCase {
         let provider = FakeProvider { _ in "x" }
         let runner = makeRunner(provider, settings: settings)
 
-        runner.improveSelection()
+        runner.run(.improve)
         await runner.waitUntilIdle()
 
         XCTAssertEqual(provider.calls, 0)
@@ -140,10 +146,10 @@ final class TextAssistantRunnerTests: XCTestCase {
         }
         let runner = makeRunner(provider)
 
-        runner.improveSelection()
+        runner.run(.improve)
         await waitUntil { provider.calls == 1 }
         provider.handler = { _ in "fast" }
-        runner.improveSelection()
+        runner.run(.improve)
         await runner.waitUntilIdle()
 
         XCTAssertEqual(provider.calls, 2)
@@ -156,11 +162,94 @@ final class TextAssistantRunnerTests: XCTestCase {
         environment.copySelection = "Fine as is."
         let runner = makeRunner(FakeProvider { _ in "Fine as is." })
 
-        runner.improveSelection()
+        runner.run(.improve)
         await runner.waitUntilIdle()
 
         XCTAssertEqual(environment.pasted, [])
         XCTAssertEqual(feedback.statuses.last, .success("Already looks good"))
+    }
+
+    // MARK: Modes, tones and quick actions
+
+    func test_ModeToneAndStyleSamplesShapeThePrompt() async throws {
+        try Data("## English\nyo, quick one: shipping friday 🚀".utf8).write(to: configStore.styleURL)
+        configStore.reload()
+        environment.copySelection = "Привет, как дела?"
+        var system = ""
+        let runner = makeRunner(FakeProvider { request in
+            await MainActor.run { system = request.system }
+            return "Hi, how are you?"
+        })
+
+        runner.run(TextAction(modeID: "translate", toneID: "my-style"))
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(feedback.statuses.first, .working("Translating…"))
+        XCTAssertTrue(system.contains("Translate the text into English"), "Russian goes to English")
+        XCTAssertTrue(system.contains("<style_samples>\n## English\nyo, quick one"))
+        XCTAssertEqual(environment.pasted, ["Hi, how are you?"])
+    }
+
+    func test_StyleSamplesAreLeftOutForOtherTones() async {
+        try? Data("## English\nmy sample".utf8).write(to: configStore.styleURL)
+        configStore.reload()
+        environment.copySelection = "text"
+        var system = ""
+        let runner = makeRunner(FakeProvider { request in
+            await MainActor.run { system = request.system }
+            return "Text."
+        })
+
+        runner.run(TextAction(modeID: "improve", toneID: "formal"))
+        await runner.waitUntilIdle()
+
+        XCTAssertTrue(system.contains("«Вы»"), "The Formal tone's instruction")
+        XCTAssertFalse(system.contains("my sample"))
+    }
+
+    func test_ModeMissingFromConfigIsReportedWithoutTouchingTheSelection() async {
+        environment.copySelection = "text"
+        let provider = FakeProvider { _ in "x" }
+        let runner = makeRunner(provider)
+
+        runner.run(TextAction(modeID: "reply", toneID: "my-style"))
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(provider.calls, 0)
+        XCTAssertEqual(environment.posted, [])
+        guard case .failure(let message) = feedback.statuses.last else { return XCTFail("Expected a failure") }
+        XCTAssertTrue(message.contains("“reply”"))
+    }
+
+    func test_ModeCanOverrideTheModel() async throws {
+        var config = TextAssistantConfig.defaults
+        config.modes[0].model = "deepseek/deepseek-flash"
+        try config.encoded().write(to: configStore.configURL)
+        configStore.reload()
+        environment.copySelection = "text"
+        var model = ""
+        let runner = makeRunner(FakeProvider { request in
+            await MainActor.run { model = request.model }
+            return "Text."
+        })
+
+        runner.run(.improve)
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(model, "deepseek/deepseek-flash")
+    }
+
+    func test_QuickActionsDefaultWithoutShortcutsAndPersist() {
+        let settings = TextAssistantSettings(defaults: defaults)
+        XCTAssertEqual(settings.actions.map { $0.title(in: .defaults) },
+                       ["Improve · My style", "Translate · My style", "Fix Grammar · Original tone", "Shorten · My style"])
+        XCTAssertEqual(settings.actions.first?.shortcutName, .textAssistantImprove, "Phase 2's shortcut carries over")
+        XCTAssertTrue(settings.actions.allSatisfy { $0.shortcutName.defaultShortcut == nil }, "No default shortcuts")
+
+        let added = TextAction(modeID: "shorten", toneID: "formal")
+        settings.actions = [settings.actions[0], added]
+        XCTAssertEqual(TextAssistantSettings(defaults: defaults).actions, [TextAction.defaults[0], added])
+        XCTAssertEqual(TextAction(modeID: "gone", toneID: "formal").title(in: .defaults), "“gone”? · Formal")
     }
 
     func test_SettingsDefaultToOpenCodeAndPersist() {
@@ -193,6 +282,7 @@ final class TextAssistantRunnerTests: XCTestCase {
     private func makeRunner(_ provider: FakeProvider, settings: TextAssistantSettings? = nil) -> TextAssistantRunner {
         TextAssistantRunner(
             settings: settings ?? TextAssistantSettings(defaults: defaults),
+            configStore: configStore,
             bridge: bridge(),
             feedback: feedback,
             makeProvider: { _ in provider }
@@ -311,4 +401,8 @@ private final class RecordingFeedback: TextAssistantFeedback {
     private(set) var statuses: [TextAssistantStatus] = []
     func show(_ status: TextAssistantStatus) { statuses.append(status) }
     func hide() {}
+}
+
+private extension TextAction {
+    static let improve = TextAction.defaults[0]
 }
