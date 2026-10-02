@@ -1,6 +1,6 @@
 # Mac Tools
 
-Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. Each tool can be switched on or off from **Mac Tools Settings**. The tools are **Desktop Stickies**, **AI Usage**, and **Text Assistant**; more will follow.
+Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. Each tool can be switched on or off from **Mac Tools Settings**. The tools are **Desktop Stickies**, **AI Usage**, **Text Assistant**, and **Shortcuts**; more will follow.
 
 ## Desktop Stickies
 
@@ -34,13 +34,24 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 - Needs **Accessibility** access: allow **Mac Tools** in System Settings → Privacy & Security → Accessibility. The first run without it opens the system prompt and the settings page.
 - Selected text is sent to the chosen model provider only when you run it, and is never logged. Secure (password) fields are refused.
 
+## Shortcuts
+
+- Shows every keyboard shortcut on this Mac in one window (**Show Shortcuts…** in the Mac Tools menu), in two parts:
+  - **Global**: shortcuts that work whichever app is in front, grouped by source: macOS (System Settings → Keyboard → Keyboard Shortcuts, including ones you turned off, plus fixed ones like ⌘Tab and ⌥⌘Esc), Mac Tools' own, and each app that saves global shortcuts in its settings (Rectangle, ChatGPT, VMware Fusion…). **Conflicts** lists combinations that two global shortcuts share.
+  - **In-App**: the shortcuts in each app's menus (File ▸ Save ⇧⌘S…), the **Standard** ones nearly every app uses, and your App Shortcuts from System Settings.
+- **Check a Shortcut** (also in the menu): press a combination, or build one with the ⌃ ⌥ ⇧ ⌘ buttons and a key, to see whether it's free as a new global shortcut: taken (and by what), a standard shortcut, not usable, used only inside some apps, or free. It also suggests the same key with other modifiers that are free. While it records, Mac Tools' own hotkeys are paused so they reach the checker.
+- Search matches actions, apps, menu paths, and keys ("⌃⌥N" or "ctrl opt n").
+- App menus are read through Accessibility (the same permission Text Assistant uses) when the window opens, on **Rescan**, and when an app launches (**Settings → Shortcuts**, on by default). They are saved in `~/Library/Application Support/Mac Tools/Shortcuts/menu-shortcuts.json`, so apps that aren't running still show; **Forget Captured Menus** deletes the file.
+- Read-only: it never changes another app's settings. macOS has no way to list other apps' global hotkeys, so they are found in apps' saved settings. Apps that read keys at a lower level (Karabiner-Elements, BetterTouchTool, Keyboard Maestro), shortcuts saved in an app's own format, and App Store apps' sandboxed settings aren't seen, so "free" means free among the shortcuts Mac Tools can see. Settings files left behind by apps that are no longer installed are ignored.
+- An optional shortcut to open the window can be recorded in **Settings → Shortcuts**; none is set by default.
+
 ## Settings
 
 **Mac Tools Settings…** (in the menu bar menu, `Command–comma`) is the home for the whole toolbox:
 
 - **General**: version, Launch at Login, and the privacy statement that applies to every tool.
 - **All Tools**: the tool inventory. Each tool can be switched on or off; a tool that is off stops running, closes its windows, and leaves the menu bar menu. Its data stays on this Mac, and the choice is remembered across launches.
-- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval. Text Assistant's page covers its shortcut, OpenCode sign-in or OpenRouter key, model, Accessibility status, and limits.
+- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval. Text Assistant's page covers its shortcut, OpenCode sign-in or OpenRouter key, model, Accessibility status, and limits. Shortcuts' page covers the window shortcut, reading app menus, Accessibility, and what it can and can't see.
 
 ## Build and test
 

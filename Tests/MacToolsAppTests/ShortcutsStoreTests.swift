@@ -87,3 +87,37 @@ final class ShortcutsStoreTests: XCTestCase {
         XCTAssertEqual(newFolder.path, ["File"])
     }
 }
+
+@MainActor
+final class ShortcutListGroupingTests: XCTestCase {
+    private func entry(_ action: String, _ detail: String, key: UInt16, enabled: Bool = true, source: ShortcutSource = .macOS) -> ShortcutEntry {
+        ShortcutEntry(combo: KeyCombo(keyCode: key, modifiers: [.control]), action: action, detail: detail, source: source, scope: .global, isEnabled: enabled)
+    }
+
+    func test_sourceGroupsOrderByAreaWithOffShortcutsLast() {
+        let entries = [
+            entry("Switch to Desktop 1", "Mission Control", key: 18, enabled: false),
+            entry("Mission Control", "Mission Control", key: 126),
+            entry("Save picture", "Screenshots", key: 20),
+            entry("Zoom in", "Accessibility", key: 24),
+        ]
+        let groups = ShortcutListView.group(entries, by: .source)
+        XCTAssertEqual(groups.map(\.title), ["macOS"])
+        XCTAssertEqual(groups[0].entries.map(\.action), ["Zoom in", "Mission Control", "Save picture", "Switch to Desktop 1"])
+    }
+
+    func test_sourceGroupsPutMacOSAndMacToolsFirst() {
+        let rectangle = ShortcutSource.app(bundleID: "r", name: "Rectangle")
+        let groups = ShortcutListView.group([
+            entry("Left Half", "Window management", key: 123, source: rectangle),
+            entry("New Note", "Desktop Stickies", key: 45, source: .macTools),
+            entry("Spotlight", "Spotlight", key: 49),
+        ], by: .source)
+        XCTAssertEqual(groups.map(\.title), ["macOS", "Mac Tools", "Rectangle"])
+    }
+
+    func test_detailGroupsSortByTitle() {
+        let groups = ShortcutListView.group([entry("B", "View", key: 1), entry("A", "File", key: 2)], by: .detail)
+        XCTAssertEqual(groups.map(\.title), ["File", "View"])
+    }
+}

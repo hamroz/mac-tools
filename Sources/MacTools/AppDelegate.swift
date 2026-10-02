@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import MacToolsCore
 
 @MainActor
@@ -8,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var desktopProbe: DesktopProbe?
     private let launchAtLoginManager = LaunchAtLoginManager()
     private var settingsWindow: SettingsWindowController?
+    private var stickies: DesktopStickiesModule?
+    /// Text Assistant and Shortcuts hotkeys that were on before the Shortcuts checker paused them.
+    private var pausedShortcutNames: [KeyboardShortcuts.Name] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -24,7 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let repository = StickyNoteRepository()
         let stickies = DesktopStickiesModule(repository: repository)
-        let registry = ToolRegistry(modules: [stickies, AIUsageModule(), TextAssistantModule()])
+        self.stickies = stickies
+        let shortcuts = ShortcutsModule(store: ShortcutsStore(macToolsShortcuts: { [weak self] in
+            self?.macToolsShortcutEntries() ?? []
+        }))
+        shortcuts.pauseHotKeys = { [weak self] paused in self?.setHotKeysPaused(paused) }
+        let registry = ToolRegistry(modules: [stickies, AIUsageModule(), TextAssistantModule(), shortcuts])
         registry.onChange = { [weak self] in self?.rebuildStatusMenu() }
         registry.onOpenSettings = { [weak self] id in self?.showSettings(.tool(id)) }
         self.registry = registry
@@ -109,6 +118,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow = SettingsWindowController(registry: registry, launchAtLoginManager: launchAtLoginManager)
         }
         settingsWindow?.show(pane)
+    }
+
+    /// Mac Tools' own global shortcuts, for the Shortcuts tool; tools that are off don't count.
+    private func macToolsShortcutEntries() -> [ShortcutEntry] {
+        guard let registry else { return [] }
+        return MacToolsShortcutSource.entries(
+            stickiesPreset: registry.isEnabled("desktop-stickies") ? stickies?.hotKeyPreset : nil,
+            textAssistant: registry.isEnabled("text-assistant") ? KeyboardShortcuts.getShortcut(for: .textAssistantImprove) : nil,
+            shortcutsWindow: registry.isEnabled("shortcuts") ? KeyboardShortcuts.getShortcut(for: .shortcutsShowWindow) : nil
+        )
+    }
+
+    /// While the Shortcuts checker records, Mac Tools' own hotkeys must reach it instead of firing.
+    private func setHotKeysPaused(_ paused: Bool) {
+        stickies?.setHotKeyPaused(paused)
+        if paused {
+            pausedShortcutNames = [.textAssistantImprove, .shortcutsShowWindow].filter { KeyboardShortcuts.isEnabled(for: $0) }
+            KeyboardShortcuts.disable(pausedShortcutNames)
+        } else {
+            KeyboardShortcuts.enable(pausedShortcutNames)
+            pausedShortcutNames = []
+        }
     }
 
     /// Clears preferences left behind by the removed Menu Bar Organizer.

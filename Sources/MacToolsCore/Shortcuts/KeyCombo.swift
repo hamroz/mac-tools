@@ -32,12 +32,13 @@ public struct ShortcutModifiers: OptionSet, Hashable, Codable, Sendable {
         self = value
     }
 
-    /// `AXMenuItemCmdModifiers`: Command is implied unless bit 3 is set.
+    /// `AXMenuItemCmdModifiers`: Command is implied unless bit 3 is set; bit 4 is fn/Globe.
     public init(axMenu: Int) {
         var value: ShortcutModifiers = axMenu & 8 == 0 ? [.command] : []
         if axMenu & 1 != 0 { value.insert(.shift) }
         if axMenu & 2 != 0 { value.insert(.option) }
         if axMenu & 4 != 0 { value.insert(.control) }
+        if axMenu & 16 != 0 { value.insert(.function) }
         self = value
     }
 

@@ -17,6 +17,9 @@ final class KeyComboTests: XCTestCase {
         XCTAssertEqual(ShortcutModifiers(axMenu: 2), [.command, .option])
         XCTAssertEqual(ShortcutModifiers(axMenu: 8), [])
         XCTAssertEqual(ShortcutModifiers(axMenu: 12), [.control])
+        // Bit 16 is fn/Globe: Finder reports Emoji & Symbols (fn E) as 24 and Fill (fn⌃F) as 28.
+        XCTAssertEqual(ShortcutModifiers(axMenu: 24), [.function])
+        XCTAssertEqual(ShortcutModifiers(axMenu: 28), [.control, .function])
     }
 
     func test_displayString() {
