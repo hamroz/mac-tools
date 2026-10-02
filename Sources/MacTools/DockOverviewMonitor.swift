@@ -45,11 +45,7 @@ final class DockOverviewMonitor: ObservableObject {
 
     // Called only from an explicit user action in Settings or the prototype UI.
     func requestPermission() {
-        guard !AXIsProcessTrusted() else { retry(); return }
-        // The C SDK exposes this immutable option key as a mutable global.
-        // Use its verified string value instead of weakening Swift 6 isolation.
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        AccessibilityPermission.shared.request()
         retry()
     }
 

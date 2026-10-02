@@ -1,6 +1,6 @@
 # Mac Tools
 
-Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. Each tool can be switched on or off from **Mac Tools Settings**. The tools are **Desktop Stickies** and **AI Usage**; more will follow.
+Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. Each tool can be switched on or off from **Mac Tools Settings**. The tools are **Desktop Stickies**, **AI Usage**, and **Text Assistant**; more will follow.
 
 ## Desktop Stickies
 
@@ -21,13 +21,23 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 - **Codex** reads `~/.codex/auth.json` and asks OpenAI for the numbers `/status` shows. If that fails, it shows the limits Codex last recorded in `~/.codex/sessions`.
 - Sign-ins are only read, never stored or changed, and are sent only to the service they belong to. These usage endpoints are not public APIs and may change.
 
+## Text Assistant
+
+- Improves the text you've selected in any app (Slack, Telegram, Notes, browsers…) and pastes the result over the selection. The model fixes spelling, grammar, and punctuation in the same language and keeps your meaning and voice.
+- Trigger it with your own shortcut (**Settings → Text Assistant → Shortcut**; none is set by default) or **Improve Selected Text** in the Mac Tools menu. A small bubble next to the pointer shows progress and errors.
+- The selection is read through Accessibility when the app exposes it, otherwise by sending ⌘C. The result is pasted with ⌘V. Your clipboard, with every format on it, is put back afterwards, including after errors and cancellations. Pressing the shortcut again while a request is running cancels it and starts over.
+- If the result can't be pasted (you switched apps meanwhile), it stays on the clipboard and the bubble says so. **Copy Last Result** in the menu brings back the most recent result; it is kept in memory only.
+- Uses [OpenRouter](https://openrouter.ai/keys). The API key is stored only in the login Keychain (`com.local.MacTools.TextAssistant`). The model defaults to `anthropic/claude-haiku-4.5` and can be any OpenRouter model ID. Transient failures (network, rate limit, server errors) are retried once.
+- Needs **Accessibility** access: allow **Mac Tools** in System Settings → Privacy & Security → Accessibility. The first run without it opens the system prompt and the settings page.
+- Selected text is sent to OpenRouter only when you run it, and is never logged. Secure (password) fields are refused.
+
 ## Settings
 
 **Mac Tools Settings…** (in the menu bar menu, `Command–comma`) is the home for the whole toolbox:
 
 - **General**: version, Launch at Login, and the privacy statement that applies to every tool.
 - **All Tools**: the tool inventory. Each tool can be switched on or off; a tool that is off stops running, closes its windows, and leaves the menu bar menu. Its data stays on this Mac, and the choice is remembered across launches.
-- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval.
+- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval. Text Assistant's page covers its shortcut, OpenRouter key and model, Accessibility status, and limits.
 
 ## Build and test
 

@@ -24,6 +24,11 @@ rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources"
 cp "$BIN_DIR/MacTools" "$CONTENTS_DIR/MacOS/MacTools"
 cp "$PROJECT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+# Package resources (KeyboardShortcuts' localizations); the library stops the
+# app if its bundle is missing from Contents/Resources.
+for bundle in "$BIN_DIR"/*.bundle(N); do
+    ditto "$bundle" "$CONTENTS_DIR/Resources/${bundle:t}"
+done
 
 "$SCRIPT_DIR/sign-app.sh" "$APP_DIR"
 echo "$APP_DIR"

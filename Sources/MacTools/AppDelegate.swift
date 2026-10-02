@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let repository = StickyNoteRepository()
         let stickies = DesktopStickiesModule(repository: repository)
-        let registry = ToolRegistry(modules: [stickies, AIUsageModule()])
+        let registry = ToolRegistry(modules: [stickies, AIUsageModule(), TextAssistantModule()])
         registry.onChange = { [weak self] in self?.rebuildStatusMenu() }
         registry.onOpenSettings = { [weak self] id in self?.showSettings(.tool(id)) }
         self.registry = registry
