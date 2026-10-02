@@ -65,6 +65,14 @@ final class ShortcutsStoreTests: XCTestCase {
         XCTAssertTrue(leftHalf.isSourceRunning)
     }
 
+    func test_notLoadedUntilFirstScanFinishes() async {
+        // The checker must not call anything "Free" against an empty catalog.
+        let store = makeStore()
+        XCTAssertFalse(store.hasLoaded)
+        await store.refresh(captureMenus: false)
+        XCTAssertTrue(store.hasLoaded)
+    }
+
     func test_rectangleNeedsToBeInstalled() async {
         let store = makeStore()
         await store.refresh(captureMenus: false)

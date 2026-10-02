@@ -28,10 +28,17 @@ struct ShortcutCheckView: View {
                 recorderBox
                 builder
                 if let combo {
-                    let result = ShortcutChecker.check(combo, in: store.catalog)
-                    VerdictView(result: result)
-                    matches(result)
-                    alternatives(for: combo)
+                    if store.hasLoaded {
+                        let result = ShortcutChecker.check(combo, in: store.catalog)
+                        VerdictView(result: result)
+                        matches(result)
+                        alternatives(for: combo)
+                    } else {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Reading your shortcuts…").foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             .padding(24)

@@ -10,6 +10,8 @@ final class ShortcutsStore: ObservableObject {
     @Published private(set) var capturedApps: [String: CapturedApp] = [:]
     @Published private(set) var isScanning = false
     @Published private(set) var lastScan: Date?
+    /// False until settings have been read once; until then the catalog is empty, not "all free".
+    @Published private(set) var hasLoaded = false
     /// "Reading Cursor's menus…" while a scan runs.
     @Published private(set) var progress: String?
 
@@ -75,6 +77,7 @@ final class ShortcutsStore: ObservableObject {
         let appLocator = self.appLocator
         capturedApps = capturedApps.filter { appLocator($0.key) != nil }
         rebuild()
+        hasLoaded = true
 
         guard captureMenus, AXIsProcessTrusted() else { return }
         for app in running where app.isRegular {
