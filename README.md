@@ -35,6 +35,7 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 - Text Assistant runs its own `opencode serve` on 127.0.0.1, behind a password made fresh for each launch, with a minimal agent that has no tools and none of OpenCode's coding prompt. It starts on first use (about a second), stops after 10 idle minutes and when Mac Tools quits, and keeps its throwaway sessions in its own database (`~/Library/Application Support/Mac Tools/Text Assistant/OpenCode/`), out of your OpenCode history.
 - Alternatively, use an **OpenRouter API key** stored only in the login Keychain (`com.local.MacTools.TextAssistant`), with a model chosen from OpenRouter's public list (default `anthropic/claude-haiku-4.5`).
 - Transient failures (network, rate limit, server errors) are retried once. Errors appear in the bubble with an **Open Settings** button.
+- **Check Setup** in Settings verifies, step by step, Accessibility, the model source (OpenCode installed and signed in, or an OpenRouter key), config.json, and runs a short sample sentence through your model, showing the answer and how long it took. It doesn't touch the clipboard or any app.
 - Needs **Accessibility** access: allow **Mac Tools** in System Settings → Privacy & Security → Accessibility. The first run without it opens the system prompt and the settings page.
 - Selected text is sent to the chosen model provider only when you run it, and is never logged. Secure (password) fields are refused.
 

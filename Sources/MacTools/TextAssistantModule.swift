@@ -19,6 +19,7 @@ final class TextAssistantModule: NSObject, ToolModule {
     let settings: TextAssistantSettings
     let configStore: TextAssistantConfigStore
     let runner: TextAssistantRunner
+    let setupCheck: TextAssistantSetupCheck
     let openCode: OpenCodeServer
     private let openRouterCatalog = OpenRouterCatalog()
     private let hud: TextAssistantHUD
@@ -39,18 +40,22 @@ final class TextAssistantModule: NSObject, ToolModule {
         self.openCode = openCode
         let hud = TextAssistantHUD()
         self.hud = hud
+        let makeProvider: @MainActor (TextAssistantSettings) -> TextProvider = { settings in
+            let timeout = TimeInterval(settings.timeoutSeconds)
+            switch settings.provider {
+            case .openCode: return OpenCodeProvider(server: openCode, timeout: timeout)
+            case .openRouter: return OpenRouterProvider(timeout: timeout)
+            }
+        }
         runner = TextAssistantRunner(
             settings: settings,
             configStore: configStore,
             bridge: TextSelectionBridge(pasteboard: SystemPasteboard(), environment: SystemSelectionEnvironment()),
             feedback: hud,
-            makeProvider: { settings in
-                let timeout = TimeInterval(settings.timeoutSeconds)
-                switch settings.provider {
-                case .openCode: return OpenCodeProvider(server: openCode, timeout: timeout)
-                case .openRouter: return OpenRouterProvider(timeout: timeout)
-                }
-            }
+            makeProvider: makeProvider
+        )
+        setupCheck = TextAssistantSetupCheck(
+            settings: settings, configStore: configStore, openCode: openCode, makeProvider: makeProvider
         )
         super.init()
         hud.onOpenSettings = { [weak self] in self?.openSettings?() }
@@ -125,7 +130,7 @@ final class TextAssistantModule: NSObject, ToolModule {
     func makeSettingsView() -> AnyView {
         AnyView(TextAssistantSettingsView(
             settings: settings, configStore: configStore, permission: .shared,
-            openCode: openCode, openRouterCatalog: openRouterCatalog
+            openCode: openCode, openRouterCatalog: openRouterCatalog, setupCheck: setupCheck
         ))
     }
 

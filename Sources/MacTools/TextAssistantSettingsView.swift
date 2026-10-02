@@ -10,6 +10,7 @@ struct TextAssistantSettingsView: View {
     @ObservedObject var permission: AccessibilityPermission
     @ObservedObject var openCode: OpenCodeServer
     @ObservedObject var openRouterCatalog: OpenRouterCatalog
+    @ObservedObject var setupCheck: TextAssistantSetupCheck
     var keychain = KeychainStore.openRouterKey
 
     @State private var hasKey = false
@@ -156,6 +157,24 @@ struct TextAssistantSettingsView: View {
             Text("Limits")
         } footer: {
             Text("Your clipboard is always put back after a run. If a result can’t be pasted, it is left on the clipboard instead, and Copy Last Result in the Mac Tools menu brings it back.")
+                .settingsFootnote()
+        }
+
+        Section {
+            HStack {
+                Text(setupSummary)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(setupCheck.steps.isEmpty ? "Check Setup" : "Check Again") { setupCheck.run() }
+                    .disabled(setupCheck.isRunning)
+            }
+            ForEach(setupCheck.steps) { step in
+                SetupCheckRow(step: step)
+            }
+        } header: {
+            Text("Check Setup")
+        } footer: {
+            Text("Checks Accessibility, the model source, config.json, and runs a short sample sentence through your model. It doesn’t touch your clipboard or any app.")
                 .settingsFootnote()
         }
         .onAppear {
@@ -305,6 +324,12 @@ struct TextAssistantSettingsView: View {
         if !id.isEmpty, !known.contains(id) { Text("“\(id)” (missing)").tag(id) }
     }
 
+    private var setupSummary: String {
+        if setupCheck.isRunning { return "Checking…" }
+        if setupCheck.steps.isEmpty { return "Make sure everything is ready to go." }
+        return setupCheck.allPassed ? "Everything is ready." : "Something needs attention."
+    }
+
     private var styleSummary: String {
         guard let samples = configStore.styleSamples else { return "None yet" }
         return "\(samples.count.formatted()) characters"
@@ -363,6 +388,42 @@ private struct QuickActionRow: View {
             .buttonStyle(.plain)
             .help("Remove this action")
             .accessibilityLabel("Remove \(action.title(in: config))")
+        }
+    }
+}
+
+private struct SetupCheckRow: View {
+    let step: TextAssistantSetupCheck.Step
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            icon
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.kind.title)
+                if let detail {
+                    Text(detail)
+                        .settingsFootnote()
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var icon: some View {
+        switch step.status {
+        case .waiting: Image(systemName: "circle.dotted").foregroundStyle(.tertiary)
+        case .running: ProgressView().controlSize(.small)
+        case .passed: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+        case .skipped: Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+        }
+    }
+
+    private var detail: String? {
+        switch step.status {
+        case .waiting, .running: nil
+        case .passed(let text), .failed(let text), .skipped(let text): text
         }
     }
 }
