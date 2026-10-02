@@ -19,7 +19,7 @@ final class ShortcutsNavigation: ObservableObject {
 }
 
 @MainActor
-final class ShortcutsWindowController: NSWindowController, NSWindowDelegate {
+final class ShortcutsWindowController: NSWindowController {
     private let navigation = ShortcutsNavigation()
     private let store: ShortcutsStore
     /// Scans more often than this only when asked with Rescan.

@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import ApplicationServices
 import XCTest
 import MacToolsCore
@@ -129,5 +130,28 @@ final class ShortcutListGroupingTests: XCTestCase {
     func test_detailGroupsSortByTitle() {
         let groups = ShortcutListView.group([entry("B", "View", key: 1), entry("A", "File", key: 2)], by: .detail)
         XCTAssertEqual(groups.map(\.title), ["File", "View"])
+    }
+}
+
+@MainActor
+final class ComboRecorderTests: XCTestCase {
+    func test_recordingStopsWhenFocusLeaves() {
+        for name in [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification] {
+            let recorder = ComboRecorder()
+            var changes: [Bool] = []
+            recorder.onRecordingChange = { changes.append($0) }
+            recorder.start()
+            XCTAssertTrue(recorder.isRecording)
+            NotificationCenter.default.post(name: name, object: nil)
+            XCTAssertFalse(recorder.isRecording, "\(name.rawValue) must end recording")
+            XCTAssertEqual(changes, [true, false], "hotkeys are resumed exactly once")
+        }
+    }
+
+    func test_resumeOnlyRestoresHotKeysOfToolsStillOn() {
+        let names: [KeyboardShortcuts.Name] = [.textAssistantImprove, .shortcutsShowWindow]
+        XCTAssertEqual(AppDelegate.namesToResume(names, enabledTools: ["shortcuts"]), [.shortcutsShowWindow])
+        XCTAssertEqual(AppDelegate.namesToResume(names, enabledTools: ["text-assistant", "shortcuts"]), names)
+        XCTAssertEqual(AppDelegate.namesToResume(names, enabledTools: []), [])
     }
 }

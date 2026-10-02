@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stickies: DesktopStickiesModule?
     /// Text Assistant and Shortcuts hotkeys that were on before the Shortcuts checker paused them.
     private var pausedShortcutNames: [KeyboardShortcuts.Name] = []
+    private var hotKeysPaused = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -132,14 +133,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// While the Shortcuts checker records, Mac Tools' own hotkeys must reach it instead of firing.
     private func setHotKeysPaused(_ paused: Bool) {
+        guard paused != hotKeysPaused else { return }
+        hotKeysPaused = paused
         stickies?.setHotKeyPaused(paused)
         if paused {
-            pausedShortcutNames = [.textAssistantImprove, .shortcutsShowWindow].filter { KeyboardShortcuts.isEnabled(for: $0) }
+            pausedShortcutNames = Array(Self.shortcutTools.keys).filter { KeyboardShortcuts.isEnabled(for: $0) }
             KeyboardShortcuts.disable(pausedShortcutNames)
         } else {
-            KeyboardShortcuts.enable(pausedShortcutNames)
+            let enabledTools = Set(registry?.enabledModules.map(\.descriptor.id) ?? [])
+            KeyboardShortcuts.enable(Self.namesToResume(pausedShortcutNames, enabledTools: enabledTools))
             pausedShortcutNames = []
         }
+    }
+
+    /// Recorder-based global shortcuts and the tool that owns each.
+    private static let shortcutTools: [KeyboardShortcuts.Name: String] = [
+        .textAssistantImprove: "text-assistant",
+        .shortcutsShowWindow: "shortcuts",
+    ]
+
+    /// A tool switched off while hotkeys were paused has removed its handler; registering its shortcut
+    /// again would swallow the keys system-wide with nothing listening.
+    static func namesToResume(_ names: [KeyboardShortcuts.Name], enabledTools: Set<String>) -> [KeyboardShortcuts.Name] {
+        names.filter { name in shortcutTools[name].map(enabledTools.contains) ?? false }
     }
 
     /// Clears preferences left behind by the removed Menu Bar Organizer.

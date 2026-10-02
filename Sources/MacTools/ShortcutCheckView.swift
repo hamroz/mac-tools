@@ -302,12 +302,20 @@ final class ComboRecorder: ObservableObject {
     var onRecord: ((KeyCombo) -> Void)?
     var onRecordingChange: ((Bool) -> Void)?
     private var monitor: Any?
+    private var focusObservers: [NSObjectProtocol] = []
 
     func start() {
         guard !isRecording else { return }
         isRecording = true
         heldModifiers = []
         onRecordingChange?(true)
+        // Hotkeys are paused while recording, so recording must end as soon as focus leaves
+        // the window (switching apps, closing it, or using another Mac Tools window).
+        focusObservers = [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.stop() }
+            }
+        }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             let isFlagsChange = event.type == .flagsChanged
             let keyCode = event.keyCode
@@ -323,6 +331,8 @@ final class ComboRecorder: ObservableObject {
         guard isRecording else { return }
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        focusObservers.forEach(NotificationCenter.default.removeObserver)
+        focusObservers = []
         isRecording = false
         heldModifiers = []
         onRecordingChange?(false)
