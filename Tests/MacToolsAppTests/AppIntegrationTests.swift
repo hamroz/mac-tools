@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import SwiftUI
 import XCTest
 import MacToolsCore
@@ -64,6 +65,35 @@ final class AppIntegrationTests: XCTestCase {
         registry.setEnabled(true, for: "first")
         XCTAssertEqual(first.events, ["start", "stop"], "Tools do not start while the app is shutting down")
         XCTAssertTrue(registry.isEnabled("first"))
+    }
+
+    func test_ShortcutsModuleMenuAndSettings() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cacheURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("cache.json")
+        let store = ShortcutsStore(cache: MenuShortcutCacheStore(url: cacheURL), macToolsShortcuts: { [] })
+        let settings = ShortcutsSettings(defaults: defaults)
+        let module = ShortcutsModule(store: store, settings: settings)
+        XCTAssertEqual(module.descriptor.id, "shortcuts")
+        XCTAssertEqual(module.descriptor.name, "Shortcuts")
+        XCTAssertEqual(module.makeMenuItems().map(\.title), ["Show Shortcuts…", "Check a Shortcut…"])
+        XCTAssertTrue(settings.captureMenusAutomatically, "on by default")
+        settings.captureMenusAutomatically = false
+        XCTAssertFalse(ShortcutsSettings(defaults: defaults).captureMenusAutomatically)
+    }
+
+    func test_MacToolsShortcutEntries() {
+        let entries = MacToolsShortcutSource.entries(
+            stickiesPreset: .controlOptionN,
+            textAssistant: [(KeyboardShortcuts.Shortcut(carbonKeyCode: 16, carbonModifiers: 4096 | 2048), "Improve · My style")],
+            shortcutsWindow: nil
+        )
+        XCTAssertEqual(entries.map(\.action), ["New Note", "Improve · My style"])
+        XCTAssertEqual(entries.first?.combo, KeyCombo(keyCode: 45, modifiers: [.control, .option]))
+        XCTAssertEqual(entries.first?.detail, "Desktop Stickies")
+        XCTAssertEqual(entries.last?.combo, KeyCombo(keyCode: 16, modifiers: [.control, .option]))
+        XCTAssertTrue(entries.allSatisfy { $0.source == .macTools && $0.scope == .global })
+        XCTAssertEqual(MacToolsShortcutSource.entries(stickiesPreset: nil, textAssistant: [], shortcutsWindow: nil), [])
     }
 
     func test_ToolsCanOpenTheirOwnSettingsPage() throws {

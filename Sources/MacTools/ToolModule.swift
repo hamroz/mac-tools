@@ -20,6 +20,12 @@ protocol ToolModule: AnyObject {
     func stop()
     func makeMenuItems() -> [NSMenuItem]
     func makeSettingsView() -> AnyView
+    /// Gives a tool whose menu items change a way to ask for the menu to be rebuilt.
+    func setMenuRefresh(_ refresh: @escaping () -> Void)
+}
+
+extension ToolModule {
+    func setMenuRefresh(_ refresh: @escaping () -> Void) {}
 }
 
 @MainActor
@@ -42,6 +48,10 @@ final class ToolRegistry: ObservableObject {
         for module in modules {
             let id = module.descriptor.id
             module.openSettings = { [weak self] in self?.onOpenSettings?(id) }
+            module.setMenuRefresh { [weak self] in
+                guard let self, self.isEnabled(id) else { return }
+                self.onChange?()
+            }
         }
     }
 

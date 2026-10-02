@@ -1,6 +1,6 @@
 # Mac Tools
 
-Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. Each tool can be switched on or off from **Mac Tools Settings**. The tools are **Desktop Stickies** and **AI Usage**; more will follow.
+Mac Tools is a private, local-first macOS menu-bar utility designed to grow into a collection of small desktop tools. Each tool can be switched on or off from **Mac Tools Settings**. The tools are **Desktop Stickies**, **AI Usage**, **Text Assistant**, and **Shortcuts**; more will follow.
 
 ## Desktop Stickies
 
@@ -21,13 +21,44 @@ Mac Tools is a private, local-first macOS menu-bar utility designed to grow into
 - **Codex** reads `~/.codex/auth.json` and asks OpenAI for the numbers `/status` shows. If that fails, it shows the limits Codex last recorded in `~/.codex/sessions`.
 - Sign-ins are only read, never stored or changed, and are sent only to the service they belong to. These usage endpoints are not public APIs and may change.
 
+## Text Assistant
+
+- Improves, translates, or rewrites the text you've selected in any app (Slack, Telegram, Notes, browsers…) and pastes the result over the selection.
+- **The popup**: **Open Text Assistant…** in the Mac Tools menu (or your own shortcut) opens a panel next to the pointer with every mode and tone. Pick with ↑↓, switch lists with ←→ or Tab, or press a number or the first letter; Return runs, Esc or a click elsewhere cancels. The selection is read before the panel takes the keyboard, and the app you're editing stays frontmost, so the result is pasted back in place. The mode starts on the last one used and the tone on My style; both are adjustable in Settings. OpenCode starts while you choose, so the run doesn't wait for it.
+- **Quick actions** are mode + tone pairs in the Mac Tools menu: by default **Improve · My style**, **Translate · My style**, **Fix Grammar · Original tone**, and **Shorten · My style**. Add, change, or remove them in **Settings → Text Assistant → Quick Actions**, where each can get its own shortcut. No shortcut is set by default. The popup and the quick actions can each be switched off. A small bubble next to the pointer shows progress and errors.
+- **Modes** say what to do (Improve, Fix Grammar, Translate, Shorten); **tones** say how it should sound (My style, Original tone, Formal, Professional, Casual, Friendly, Funny). Any mode works with any tone. Translate detects the language: Russian becomes English, English becomes Russian, anything else English; a fixed target can be set per mode.
+- Modes, tones, and the prompts live in `~/Library/Application Support/Mac Tools/Text Assistant/config.json`, created with these defaults on first run and reloaded as soon as you save it. Add your own modes (for example "Reply" or "Explain simply") and tones there; a mode can also choose its own model. If the file has a mistake, Settings shows it and the last working version stays in use; **Restore Default Modes and Tones** keeps the old file as a backup.
+- **My style** uses samples of your own writing from `my-style.md` in the same folder (English and Russian). The model matches your vocabulary, sentence length, punctuation, and formality without copying the samples' content. Without samples, My style keeps the voice of the text itself.
+- **Output**: **Replace** (default) pastes the result over the selection right away. **Preview first** streams the result into a panel next to the pointer: Return replaces the selection, ⌘C copies the result, Esc or a click elsewhere cancels. In Replace mode, a selection that can't be edited (text on a web page) opens in the preview with Copy, instead of a paste that would do nothing.
+- The selection is read through Accessibility when the app exposes it, otherwise by sending ⌘C. The result is pasted with ⌘V. Your clipboard, with every format on it, is put back afterwards, including after errors and cancellations. Pressing the shortcut again while a request is running cancels it and starts over.
+- If the result can't be pasted (you switched apps meanwhile), it stays on the clipboard and the bubble says so. **Copy Last Result** in the menu brings back the most recent result; it is kept in memory only.
+- **Models come from OpenCode by default**, using the providers you already signed in to with [OpenCode](https://opencode.ai) (OpenCode Zen, OpenRouter, Anthropic, GitHub Copilot, DeepSeek…), so there is no extra API key. **Sign In…** opens Terminal with `opencode auth login` to add a provider; the refresh button picks it up. Choose the model from a searchable list grouped by provider, with prices and free models marked; Automatic picks a fast, inexpensive model you are signed in to (Claude Haiku 4.5 when available).
+- Text Assistant runs its own `opencode serve` on 127.0.0.1, behind a password made fresh for each launch, with a minimal agent that has no tools and none of OpenCode's coding prompt. It starts on first use (about a second), stops after 10 idle minutes and when Mac Tools quits, and keeps its throwaway sessions in its own database (`~/Library/Application Support/Mac Tools/Text Assistant/OpenCode/`), out of your OpenCode history.
+- **Claude Code** (optional, off unless chosen): runs `claude -p` with your Claude Code sign-in and plan, without tools, MCP servers, or saved sessions, in an empty folder; Haiku, Sonnet, or Opus. The prompt goes through a private temporary file and the text through standard input, so neither appears in the process list. Each run starts Claude Code, which adds a few seconds. The Claude desktop app's sign-in is separate; **Sign In…** opens Terminal with `claude auth login`.
+- Alternatively, use an **OpenRouter API key** stored only in the login Keychain (`com.local.MacTools.TextAssistant`), with a model chosen from OpenRouter's public list (default `anthropic/claude-haiku-4.5`).
+- Transient failures (network, rate limit, server errors) are retried once. Errors appear in the bubble with an **Open Settings** button.
+- **Check Setup** in Settings verifies, step by step, Accessibility, the model source (OpenCode installed and signed in, or an OpenRouter key), config.json, and runs a short sample sentence through your model, showing the answer and how long it took. It doesn't touch the clipboard or any app.
+- Needs **Accessibility** access: allow **Mac Tools** in System Settings → Privacy & Security → Accessibility. The first run without it opens the system prompt and the settings page.
+- Selected text is sent to the chosen model provider only when you run it, and is never logged. Secure (password) fields are refused.
+
+## Shortcuts
+
+- Shows every keyboard shortcut on this Mac in one window (**Show Shortcuts…** in the Mac Tools menu), in two parts:
+  - **Global**: shortcuts that work whichever app is in front, grouped by source: macOS (System Settings → Keyboard → Keyboard Shortcuts, including ones you turned off, plus fixed ones like ⌘Tab and ⌥⌘Esc), Mac Tools' own, and each app that saves global shortcuts in its settings (Rectangle, ChatGPT, VMware Fusion…). **Conflicts** lists combinations that two global shortcuts share.
+  - **In-App**: the shortcuts in each app's menus (File ▸ Save ⇧⌘S…), the **Standard** ones nearly every app uses, and your App Shortcuts from System Settings.
+- **Check a Shortcut** (also in the menu): press a combination, or build one with the ⌃ ⌥ ⇧ ⌘ buttons and a key, to see whether it's free as a new global shortcut: taken (and by what), a standard shortcut, not usable, used only inside some apps, or free. It also suggests the same key with other modifiers that are free. While it records, Mac Tools' own hotkeys are paused so they reach the checker.
+- Search matches actions, apps, menu paths, and keys ("⌃⌥N" or "ctrl opt n").
+- App menus are read through Accessibility (the same permission Text Assistant uses) when the window opens, on **Rescan**, and when an app launches (**Settings → Shortcuts**, on by default). They are saved in `~/Library/Application Support/Mac Tools/Shortcuts/menu-shortcuts.json`, so apps that aren't running still show; **Forget Captured Menus** deletes the file.
+- Read-only: it never changes another app's settings. macOS has no way to list other apps' global hotkeys, so they are found in apps' saved settings. Apps that read keys at a lower level (Karabiner-Elements, BetterTouchTool, Keyboard Maestro), shortcuts saved in an app's own format, and App Store apps' sandboxed settings aren't seen, so "free" means free among the shortcuts Mac Tools can see. Settings files left behind by apps that are no longer installed are ignored.
+- An optional shortcut to open the window can be recorded in **Settings → Shortcuts**; none is set by default.
+
 ## Settings
 
 **Mac Tools Settings…** (in the menu bar menu, `Command–comma`) is the home for the whole toolbox:
 
 - **General**: version, Launch at Login, and the privacy statement that applies to every tool.
 - **All Tools**: the tool inventory. Each tool can be switched on or off; a tool that is off stops running, closes its windows, and leaves the menu bar menu. Its data stays on this Mac, and the choice is remembered across launches.
-- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval.
+- **One page per tool**, listed in the sidebar, with the tool's own on/off switch and settings. Desktop Stickies' page covers the New Note shortcut, workspaces, Show Desktop, and where notes are stored; AI Usage's page covers its menu bar icon, services, and refresh interval. Text Assistant's page covers its shortcut, OpenCode sign-in or OpenRouter key, model, Accessibility status, and limits. Shortcuts' page covers the window shortcut, reading app menus, Accessibility, and what it can and can't see.
 
 ## Build and test
 

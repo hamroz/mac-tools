@@ -11,11 +11,14 @@ let package = Package(
         .library(name: "MacToolsCore", targets: ["MacToolsCore"]),
         .executable(name: "MacTools", targets: ["MacTools"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.4.0")
+    ],
     targets: [
         .target(name: "MacToolsCore"),
         .executableTarget(
             name: "MacTools",
-            dependencies: ["MacToolsCore"]
+            dependencies: ["MacToolsCore", "KeyboardShortcuts"]
         ),
         .testTarget(
             name: "MacToolsCoreTests",

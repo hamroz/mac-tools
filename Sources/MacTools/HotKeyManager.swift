@@ -16,6 +16,7 @@ final class HotKeyManager: ObservableObject {
     private let defaultsKey = "desktopStickies.hotKeyPreset"
 
     private nonisolated(unsafe) static weak var active: HotKeyManager?
+    nonisolated static let signature: OSType = 0x4D544C53 // MTLS
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -56,7 +57,17 @@ final class HotKeyManager: ObservableObject {
         )
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
-            { _, _, _ in
+            { _, event, _ in
+                // Other hotkey users (Text Assistant's shortcuts) share this event
+                // target, so only claim presses of this manager's own hotkey.
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                    nil, MemoryLayout<EventHotKeyID>.size, nil, &hotKeyID
+                )
+                guard status == noErr, hotKeyID.signature == HotKeyManager.signature else {
+                    return OSStatus(eventNotHandledErr)
+                }
                 Task { @MainActor in
                     HotKeyManager.active?.onPressed?()
                 }
@@ -77,7 +88,7 @@ final class HotKeyManager: ObservableObject {
         // Do not hide a listener-installation failure or register while stopped.
         guard eventHandlerRef != nil else { return }
         var reference: EventHotKeyRef?
-        let identifier = EventHotKeyID(signature: 0x4D544C53, id: 1) // MTLS
+        let identifier = EventHotKeyID(signature: Self.signature, id: 1)
         let status = RegisterEventHotKey(
             preset.keyCode,
             carbonModifiers(for: preset),

@@ -24,6 +24,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     private var managerWindow: ManagerWindowController?
     private var shortcutObservation: AnyCancellable?
     private var maintenanceTask: Task<Void, Never>?
+    private var isRunning = false
 
     init(repository: StickyNoteRepository, hotKeyManager: HotKeyManager = HotKeyManager()) {
         let workspaceSettings = WorkspaceSettings()
@@ -42,6 +43,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     }
 
     func start() {
+        isRunning = true
         overviewMonitor.start()
         overviewProbe.start()
         windowCoordinator.restoreActiveNotes()
@@ -62,6 +64,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     }
 
     func stop() {
+        isRunning = false
         maintenanceTask?.cancel()
         maintenanceTask = nil
         hotKeyManager.stop()
@@ -69,6 +72,15 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         managerWindow?.close()
         overviewProbe.stop()
         overviewMonitor.stop()
+    }
+
+    /// The New Note shortcut, read by the Shortcuts tool.
+    var hotKeyPreset: HotKeyPreset { hotKeyManager.preset }
+
+    /// Lets the Shortcuts checker record New Note's combination without creating a note.
+    func setHotKeyPaused(_ paused: Bool) {
+        guard isRunning else { return }
+        if paused { hotKeyManager.stop() } else { hotKeyManager.start() }
     }
 
     func makeMenuItems() -> [NSMenuItem] {
