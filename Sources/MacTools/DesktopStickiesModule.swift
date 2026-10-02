@@ -71,6 +71,9 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         overviewMonitor.stop()
     }
 
+    /// The New Note shortcut, read by the Shortcuts tool.
+    var hotKeyPreset: HotKeyPreset { hotKeyManager.preset }
+
     func makeMenuItems() -> [NSMenuItem] {
         let newItem = NSMenuItem(title: "New Note", action: #selector(createNoteFromMenu), keyEquivalent: "n")
         newItem.target = self
