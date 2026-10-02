@@ -23,16 +23,79 @@ final class AppIntegrationTests: XCTestCase {
         }
     }
 
-    func test_RegistryExposesEveryToolAndRunsLifecycle() {
+    func test_RegistryExposesEveryToolAndRunsLifecycle() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
         let first = FakeTool(id: "first")
         let second = FakeTool(id: "second")
-        let registry = ToolRegistry(modules: [first, second])
+        let registry = ToolRegistry(modules: [first, second], defaults: defaults)
         let menu = registry.makeMenu()
         XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.map(\.title), ["first", "first command", "second", "second command"])
         registry.startAll()
         registry.stopAll()
         XCTAssertEqual(first.events, ["start", "stop"])
         XCTAssertEqual(second.events, ["start", "stop"])
+    }
+
+    func test_TurningToolOffStopsItHidesItsMenuAndPersists() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = FakeTool(id: "first")
+        let second = FakeTool(id: "second")
+        let registry = ToolRegistry(modules: [first, second], defaults: defaults)
+        var changes = 0
+        registry.onChange = { changes += 1 }
+        registry.startAll()
+
+        registry.setEnabled(false, for: "first")
+        XCTAssertEqual(first.events, ["start", "stop"])
+        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(registry.makeMenu().items.filter { !$0.isSeparatorItem }.map(\.title), ["second", "second command"])
+
+        registry.setEnabled(false, for: "first")
+        XCTAssertEqual(changes, 1, "Repeating the current state must not restart or rebuild anything")
+
+        let relaunched = ToolRegistry(modules: [FakeTool(id: "first"), FakeTool(id: "second")], defaults: defaults)
+        XCTAssertFalse(relaunched.isEnabled("first"))
+        XCTAssertTrue(relaunched.isEnabled("second"))
+
+        registry.stopAll()
+        XCTAssertEqual(first.events, ["start", "stop"], "A tool that is off must not be stopped twice")
+        registry.setEnabled(true, for: "first")
+        XCTAssertEqual(first.events, ["start", "stop"], "Tools do not start while the app is shutting down")
+        XCTAssertTrue(registry.isEnabled("first"))
+    }
+
+    func test_ToolsCanOpenTheirOwnSettingsPage() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let tool = FakeTool(id: "tool")
+        let registry = ToolRegistry(modules: [tool], defaults: defaults)
+        var opened: [String] = []
+        registry.onOpenSettings = { opened.append($0) }
+        tool.openSettings?()
+        XCTAssertEqual(opened, ["tool"])
+    }
+
+    func test_TurningStickiesOffClosesEveryNoteWindow() throws {
+        _ = NSApplication.shared
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = StickyNoteRepository(storageURL: root.appendingPathComponent("notes.json"))
+        _ = repository.create(frame: CGRect(x: 200, y: 200, width: 260, height: 200), displayID: nil)
+        let coordinator = StickyWindowCoordinator(repository: repository, workspaceSettings: WorkspaceSettings(defaults: defaults))
+        let noteWindows = { NSApp.windows.filter { $0.isVisible && $0.level.rawValue < NSWindow.Level.normal.rawValue } }
+
+        coordinator.restoreActiveNotes()
+        XCTAssertEqual(noteWindows().count, 1)
+        coordinator.restoreActiveNotes()
+        XCTAssertEqual(noteWindows().count, 1, "Turning the tool back on must not duplicate open notes")
+
+        coordinator.closeAll()
+        XCTAssertTrue(noteWindows().isEmpty)
+        XCTAssertEqual(repository.activeNotes.count, 1, "Turning the tool off keeps its notes")
     }
 
     func test_ShortcutPresentationsAgreeAcrossAllPresets() {
@@ -81,10 +144,17 @@ final class AppIntegrationTests: XCTestCase {
 private final class FakeTool: ToolModule {
     let descriptor: ToolDescriptor
     var events: [String] = []
-    init(id: String) { descriptor = ToolDescriptor(id: id, name: id, symbolName: "note.text") }
+    var openSettings: (() -> Void)?
+    init(id: String) {
+        descriptor = ToolDescriptor(id: id, name: id, summary: "", symbolName: "note.text", tint: .yellow)
+    }
     func start() { events.append("start") }
     func stop() { events.append("stop") }
     func makeMenuItems() -> [NSMenuItem] { [NSMenuItem(title: "\(descriptor.name) command", action: nil, keyEquivalent: "")] }
-    func showManager() {}
-    func showSettings() {}
+    func makeSettingsView() -> AnyView { AnyView(EmptyView()) }
+}
+
+private func makeDefaults() throws -> (UserDefaults, String) {
+    let suite = "MacToolsAppTests-\(UUID().uuidString)"
+    return (try XCTUnwrap(UserDefaults(suiteName: suite)), suite)
 }

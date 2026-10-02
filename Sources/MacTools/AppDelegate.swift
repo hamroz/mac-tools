@@ -6,28 +6,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var registry: ToolRegistry?
     private var desktopProbe: DesktopProbe?
-    private var organizerModule: MenuBarOrganizerModule?
+    private let launchAtLoginManager = LaunchAtLoginManager()
+    private var settingsWindow: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
         if Bundle.main.bundleIdentifier == "com.local.MacTools.DesktopProbe" {
-            configureEditingMenu()
+            configureMainMenu()
             let probe = DesktopProbe()
             desktopProbe = probe
             probe.start()
             return
         }
 
+        Self.removeRetiredPreferences()
+
         let repository = StickyNoteRepository()
         let stickies = DesktopStickiesModule(repository: repository)
-        let organizer = MenuBarOrganizerModule()
-        organizerModule = organizer
-        let registry = ToolRegistry(modules: [stickies, organizer])
+        let registry = ToolRegistry(modules: [stickies, AIUsageModule()])
+        registry.onChange = { [weak self] in self?.rebuildStatusMenu() }
+        registry.onOpenSettings = { [weak self] id in self?.showSettings(.tool(id)) }
         self.registry = registry
 
-        configureStatusItem(for: registry)
-        configureEditingMenu()
+        configureStatusItem()
+        configureMainMenu()
         registry.startAll()
     }
 
@@ -38,37 +41,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if let desktopProbe { desktopProbe.showControls(); return true }
-        registry?.modules.first?.showManager()
+        showSettings()
         return true
     }
 
-    private func configureStatusItem(for registry: ToolRegistry) {
+    private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "square.stack.3d.up.fill", accessibilityDescription: "Mac Tools")
             button.toolTip = "Mac Tools"
         }
+        statusItem = item
+        rebuildStatusMenu()
+    }
 
+    private func rebuildStatusMenu() {
+        guard let statusItem, let registry else { return }
         let menu = registry.makeMenu()
+        if registry.enabledModules.isEmpty {
+            let empty = NSMenuItem(title: "No Tools Turned On", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            menu.addItem(.separator())
+        }
 
+        let settingsItem = NSMenuItem(title: "Mac Tools Settings…", action: #selector(showSettingsFromMenu), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit Mac Tools", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
-        item.menu = menu
-        statusItem = item
+        statusItem.menu = menu
     }
 
-    private func configureEditingMenu() {
+    /// Mac Tools has no Dock icon; this menu only supplies key equivalents while one of its windows is active.
+    private func configureMainMenu() {
         let mainMenu = NSMenu()
         let appMenu = NSMenu()
-        if organizerModule != nil {
-            let organizer = NSMenuItem(title: "Menu Bar Organizer…", action: #selector(showOrganizer), keyEquivalent: ",")
-            organizer.target = self
-            appMenu.addItem(organizer)
-            let tray = NSMenuItem(title: "Hidden Menu Bar Items", action: #selector(showHiddenMenuItems), keyEquivalent: "m")
-            tray.keyEquivalentModifierMask = [.command, .option]
-            tray.target = self
-            appMenu.addItem(tray)
+        if registry != nil {
+            let settings = NSMenuItem(title: "Settings…", action: #selector(showSettingsFromMenu), keyEquivalent: ",")
+            settings.target = self
+            appMenu.addItem(settings)
             appMenu.addItem(.separator())
         }
         appMenu.addItem(withTitle: "Quit Mac Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -89,10 +103,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = mainMenu
     }
 
+    private func showSettings(_ pane: SettingsPane? = nil) {
+        guard let registry else { return }
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindowController(registry: registry, launchAtLoginManager: launchAtLoginManager)
+        }
+        settingsWindow?.show(pane)
+    }
+
+    /// Clears preferences left behind by the removed Menu Bar Organizer.
+    private static func removeRetiredPreferences(defaults: UserDefaults = .standard) {
+        let retired = defaults.dictionaryRepresentation().keys.filter {
+            $0.hasPrefix("menuBarOrganizer.") || $0.hasSuffix(" MacTools.Organizer.Menu") || $0.hasSuffix(" MacTools.Organizer.Divider")
+        }
+        retired.forEach(defaults.removeObject(forKey:))
+    }
+
+    @objc private func showSettingsFromMenu() { showSettings() }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
-
-    @objc private func showOrganizer() { organizerModule?.showSettings() }
-    @objc private func showHiddenMenuItems() { organizerModule?.showHiddenItems() }
 }

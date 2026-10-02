@@ -9,6 +9,7 @@ final class StickyWindowCoordinator: NSObject {
     private let workspaceSettings: WorkspaceSettings
     private let desktopPresentation: DesktopPresentation?
     private var controllers: [UUID: StickyNoteWindowController] = [:]
+    private var isActive = false
 
     init(repository: StickyNoteRepository, workspaceSettings: WorkspaceSettings = WorkspaceSettings(),
          desktopPresentation: DesktopPresentation? = nil) {
@@ -21,7 +22,8 @@ final class StickyWindowCoordinator: NSObject {
     }
 
     func restoreActiveNotes() {
-        for note in repository.activeNotes {
+        isActive = true
+        for note in repository.activeNotes where controllers[note.id] == nil {
             show(note: note, focus: false)
         }
     }
@@ -69,7 +71,18 @@ final class StickyWindowCoordinator: NSObject {
         controllers.values.forEach { $0.flushTextChange() }
     }
 
+    /// Saves and closes every note window; used when the tool is switched off.
+    func closeAll() {
+        isActive = false
+        for controller in controllers.values {
+            controller.flushTextChange()
+            controller.hide()
+        }
+        controllers.removeAll()
+    }
+
     @objc private func reconcileDisplays() {
+        guard isActive else { return }
         let displays = Self.displays
         for note in repository.activeNotes {
             guard let controller = controllers[note.id] else {

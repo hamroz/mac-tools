@@ -9,7 +9,7 @@ public final class StickyNoteRepository: ObservableObject {
 
     public private(set) var recoveryURL: URL?
 
-    private let storageURL: URL
+    public let storageURL: URL
     private let fileManager: FileManager
     private let now: () -> Date
     private let encoder: JSONEncoder

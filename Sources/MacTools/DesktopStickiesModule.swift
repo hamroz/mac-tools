@@ -1,14 +1,19 @@
 import AppKit
 import Combine
 import MacToolsCore
+import SwiftUI
 
 @MainActor
 final class DesktopStickiesModule: NSObject, ToolModule {
     let descriptor = ToolDescriptor(
         id: "desktop-stickies",
         name: "Desktop Stickies",
-        symbolName: "note.text"
+        summary: "Notes that live on your desktop, behind your app windows.",
+        symbolName: "note.text",
+        tint: .yellow
     )
+
+    var openSettings: (() -> Void)?
 
     private let repository: StickyNoteRepository
     private let windowCoordinator: StickyWindowCoordinator
@@ -16,9 +21,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
     private let workspaceSettings: WorkspaceSettings
     private let overviewMonitor: DockOverviewMonitor
     private let overviewProbe: DockOverviewOverlayProbe
-    private let launchAtLoginManager = LaunchAtLoginManager()
     private var managerWindow: ManagerWindowController?
-    private var settingsWindow: SettingsWindowController?
     private var shortcutObservation: AnyCancellable?
     private var maintenanceTask: Task<Void, Never>?
 
@@ -54,7 +57,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         // Explain permission/synchronization without silently requesting access.
         if !UserDefaults.standard.bool(forKey: "desktopPinningSetupShown") {
             UserDefaults.standard.set(true, forKey: "desktopPinningSetupShown")
-            showSettings()
+            openSettings?()
         }
     }
 
@@ -62,7 +65,8 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         maintenanceTask?.cancel()
         maintenanceTask = nil
         hotKeyManager.stop()
-        windowCoordinator.flushPendingChanges()
+        windowCoordinator.closeAll()
+        managerWindow?.close()
         overviewProbe.stop()
         overviewMonitor.stop()
     }
@@ -79,11 +83,17 @@ final class DesktopStickiesModule: NSObject, ToolModule {
         manageItem.keyEquivalentModifierMask = [.command]
         manageItem.target = self
 
-        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettingsFromMenu), keyEquivalent: ",")
-        settingsItem.keyEquivalentModifierMask = [.command]
-        settingsItem.target = self
+        return [newItem, manageItem]
+    }
 
-        return [newItem, manageItem, .separator(), settingsItem]
+    func makeSettingsView() -> AnyView {
+        AnyView(DesktopStickiesSettingsView(
+            repository: repository,
+            hotKeyManager: hotKeyManager,
+            workspaceSettings: workspaceSettings,
+            overviewMonitor: overviewMonitor,
+            showManager: { [weak self] in self?.showManager() }
+        ))
     }
 
     func showManager() {
@@ -92,7 +102,7 @@ final class DesktopStickiesModule: NSObject, ToolModule {
             managerWindow = ManagerWindowController(
                 repository: repository,
                 hotKeyManager: hotKeyManager,
-                showSettings: { [weak self] in self?.showSettings() },
+                showSettings: { [weak self] in self?.openSettings?() },
                 openNote: { [weak self] id in self?.windowCoordinator.focus(noteID: id) },
                 createNote: { [weak self] in self?.createNote() },
                 deleteNote: { [weak self] id in self?.windowCoordinator.moveToRecentlyDeleted(noteID: id) },
@@ -101,18 +111,6 @@ final class DesktopStickiesModule: NSObject, ToolModule {
             )
         }
         managerWindow?.show()
-    }
-
-    func showSettings() {
-        if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(
-                hotKeyManager: hotKeyManager,
-                launchAtLoginManager: launchAtLoginManager,
-                workspaceSettings: workspaceSettings,
-                overviewMonitor: overviewMonitor
-            )
-        }
-        settingsWindow?.show()
     }
 
     private func createNote() {
@@ -125,9 +123,5 @@ final class DesktopStickiesModule: NSObject, ToolModule {
 
     @objc private func showManagerFromMenu() {
         showManager()
-    }
-
-    @objc private func showSettingsFromMenu() {
-        showSettings()
     }
 }
