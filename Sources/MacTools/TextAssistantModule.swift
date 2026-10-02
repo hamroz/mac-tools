@@ -22,6 +22,8 @@ final class TextAssistantModule: NSObject, ToolModule {
     let openCode: OpenCodeServer
     private let openRouterCatalog = OpenRouterCatalog()
     private let hud: TextAssistantHUD
+    private let popup = TextAssistantPopup()
+    private var popupTask: Task<Void, Never>?
     private var refreshMenu: (() -> Void)?
     private var registeredShortcuts: [KeyboardShortcuts.Name] = []
     private var observers: [AnyCancellable] = []
@@ -56,16 +58,26 @@ final class TextAssistantModule: NSObject, ToolModule {
             AccessibilityPermission.shared.request()
             self?.openSettings?()
         }
+        popup.onCancel = { [weak self] in self?.popupTask?.cancel() }
     }
 
     func start() {
         configStore.start()
         registerShortcuts(for: settings.actions)
+        KeyboardShortcuts.onKeyDown(for: .textAssistantPopup) { [weak self] in self?.openPopup() }
+        applyTriggerSwitches()
         observers = [
             settings.$actions.dropFirst().sink { [weak self] actions in
                 self?.registerShortcuts(for: actions)
+                self?.applyTriggerSwitches()
                 self?.refreshMenu?()
             },
+            Publishers.Merge(settings.$quickActionsEnabled.dropFirst(), settings.$popupEnabled.dropFirst())
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in
+                    self?.applyTriggerSwitches()
+                    self?.refreshMenu?()
+                },
             // Mode and tone names appear in the menu.
             configStore.$config.dropFirst().removeDuplicates().sink { [weak self] _ in self?.refreshMenu?() },
         ]
@@ -75,6 +87,9 @@ final class TextAssistantModule: NSObject, ToolModule {
         observers.removeAll()
         registeredShortcuts.forEach(KeyboardShortcuts.removeHandler(for:))
         registeredShortcuts = []
+        KeyboardShortcuts.removeHandler(for: .textAssistantPopup)
+        popupTask?.cancel()
+        popup.close()
         configStore.stop()
         runner.cancel()
         hud.hide()
@@ -86,7 +101,14 @@ final class TextAssistantModule: NSObject, ToolModule {
     }
 
     func makeMenuItems() -> [NSMenuItem] {
-        var items = settings.actions.map { action in
+        var items: [NSMenuItem] = []
+        if settings.popupEnabled {
+            let open = NSMenuItem(title: "Open Text Assistant…", action: #selector(openPopupFromMenu), keyEquivalent: "")
+            open.target = self
+            open.setShortcut(for: .textAssistantPopup)
+            items.append(open)
+        }
+        items += (settings.quickActionsEnabled ? settings.actions : []).map { action in
             let item = NSMenuItem(title: title(for: action), action: #selector(runFromMenu(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = action.id
@@ -112,14 +134,65 @@ final class TextAssistantModule: NSObject, ToolModule {
         action.title(in: configStore.config)
     }
 
-    /// Recorded quick-action shortcuts, for the Shortcuts tool.
+    /// Recorded shortcuts that are switched on, for the Shortcuts tool.
     var shortcutEntries: [(shortcut: KeyboardShortcuts.Shortcut, action: String)] {
-        settings.actions.compactMap { action in
+        var entries: [(shortcut: KeyboardShortcuts.Shortcut, action: String)] = []
+        if settings.popupEnabled, let popup = KeyboardShortcuts.getShortcut(for: .textAssistantPopup) {
+            entries.append((popup, "Open Text Assistant"))
+        }
+        guard settings.quickActionsEnabled else { return entries }
+        return entries + settings.actions.compactMap { action in
             KeyboardShortcuts.getShortcut(for: action.shortcutName).map { ($0, title(for: action)) }
         }
     }
 
-    var shortcutNames: [KeyboardShortcuts.Name] { settings.actions.map(\.shortcutName) }
+    /// The shortcuts that are switched on, so pausing and resuming leaves the others off.
+    var shortcutNames: [KeyboardShortcuts.Name] {
+        (settings.popupEnabled ? [.textAssistantPopup] : []) + (settings.quickActionsEnabled ? settings.actions.map(\.shortcutName) : [])
+    }
+
+    /// The popup and the quick actions can each be switched off; their shortcuts then do nothing.
+    private func applyTriggerSwitches() {
+        if settings.popupEnabled { KeyboardShortcuts.enable(.textAssistantPopup) } else { KeyboardShortcuts.disable(.textAssistantPopup) }
+        let names = settings.actions.map(\.shortcutName)
+        if settings.quickActionsEnabled { KeyboardShortcuts.enable(names) } else { KeyboardShortcuts.disable(names) }
+    }
+
+    // MARK: Popup
+
+    func openPopup() {
+        guard settings.popupEnabled else { return }
+        popupTask?.cancel()
+        hud.hide()
+        configStore.reloadIfChanged()
+        let start = settings.popupStart(in: configStore.config)
+        popup.show(config: configStore.config, modeID: start.modeID, toneID: start.toneID)
+        if settings.provider == .openCode {
+            // Start OpenCode while the user picks, so the run doesn't wait for it.
+            Task { [openCode] in _ = try? await openCode.connect() }
+        }
+        popupTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let selection = try await self.runner.captureSelection()
+                guard !Task.isCancelled else { return }
+                self.popup.onRun = { [weak self] modeID, toneID in
+                    self?.settings.rememberPopupChoice(modeID: modeID, toneID: toneID)
+                    self?.runner.run(modeID: modeID, toneID: toneID, selection: selection)
+                }
+                self.popup.present(selection: selection.text)
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError) else { return }
+                self.popup.close()
+                self.hud.show(.failure((error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+            }
+        }
+    }
+
+    @objc private func openPopupFromMenu() {
+        // Let the menu finish closing so the selection is read from the app, not the menu.
+        DispatchQueue.main.async { [weak self] in self?.openPopup() }
+    }
 
     private func registerShortcuts(for actions: [TextAction]) {
         let names = actions.map(\.shortcutName)

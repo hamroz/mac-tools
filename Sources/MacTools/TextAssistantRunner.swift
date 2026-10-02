@@ -51,7 +51,8 @@ final class TextAssistantRunner: ObservableObject {
         run(modeID: action.modeID, toneID: action.toneID)
     }
 
-    func run(modeID: String, toneID: String) {
+    /// Runs a mode and tone on `selection`, or on the selection captured now when nil.
+    func run(modeID: String, toneID: String, selection: CapturedSelection? = nil) {
         let previous = current
         previous?.cancel()
         generation += 1
@@ -60,7 +61,26 @@ final class TextAssistantRunner: ObservableObject {
             // Let the previous run finish its clipboard work before reading the selection.
             await previous?.value
             guard let self, !Task.isCancelled else { return }
-            await self.perform(run, modeID: modeID, toneID: toneID)
+            await self.perform(run, modeID: modeID, toneID: toneID, captured: selection)
+        }
+    }
+
+    /// For the popup: stops any run in flight (after it restores the clipboard),
+    /// then reads the selection before the popup takes keyboard focus.
+    func captureSelection() async throws -> CapturedSelection {
+        let previous = current
+        previous?.cancel()
+        generation += 1
+        await previous?.value
+        do {
+            let selection = try await bridge.capture()
+            guard selection.text.count <= settings.maxLength else {
+                throw TextAssistantError.textTooLong(limit: settings.maxLength, actual: selection.text.count)
+            }
+            return selection
+        } catch {
+            if (error as? TextAssistantError) == .accessibilityNotTrusted { onAccessibilityMissing?() }
+            throw error
         }
     }
 
@@ -73,7 +93,7 @@ final class TextAssistantRunner: ObservableObject {
         await current?.value
     }
 
-    private func perform(_ run: Int, modeID: String, toneID: String) async {
+    private func perform(_ run: Int, modeID: String, toneID: String, captured: CapturedSelection?) async {
         // An edit saved a moment ago counts.
         configStore.reloadIfChanged()
         let config = configStore.config
@@ -90,7 +110,8 @@ final class TextAssistantRunner: ObservableObject {
 
         var result: String?
         do {
-            let selection = try await bridge.capture()
+            let selection: CapturedSelection
+            if let captured { selection = captured } else { selection = try await bridge.capture() }
             let length = selection.text.count
             guard length <= settings.maxLength else {
                 throw TextAssistantError.textTooLong(limit: settings.maxLength, actual: length)

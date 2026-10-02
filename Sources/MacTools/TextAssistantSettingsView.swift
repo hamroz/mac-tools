@@ -18,30 +18,40 @@ struct TextAssistantSettingsView: View {
 
     var body: some View {
         Section {
-            ForEach($settings.actions) { $action in
-                QuickActionRow(action: $action, config: configStore.config) {
-                    settings.actions.removeAll { $0.id == action.id }
+            Toggle("Show the Text Assistant popup", isOn: $settings.popupEnabled)
+            if settings.popupEnabled {
+                LabeledContent("Shortcut") {
+                    KeyboardShortcuts.Recorder(for: .textAssistantPopup)
+                }
+                Picker("Start with mode", selection: $settings.popupModeID) {
+                    Text("Last used").tag("")
+                    Divider()
+                    ForEach(configStore.config.modes) { Text($0.name).tag($0.id) }
+                    missingTag(settings.popupModeID, known: configStore.config.modes.map(\.id))
+                }
+                Picker("Start with tone", selection: $settings.popupToneID) {
+                    Text("Last used").tag("")
+                    Divider()
+                    ForEach(configStore.config.tones) { Text($0.name).tag($0.id) }
+                    missingTag(settings.popupToneID, known: configStore.config.tones.map(\.id))
                 }
             }
-            HStack {
-                Button {
-                    let config = configStore.config
-                    settings.actions.append(TextAction(
-                        modeID: config.modes.first?.id ?? "improve",
-                        toneID: config.tone(id: "my-style")?.id ?? config.tones.first?.id ?? "my-style"
-                    ))
-                } label: {
-                    Label("Add Action", systemImage: "plus")
-                }
-                Spacer()
-                if settings.actions != TextAction.defaults {
-                    Button("Restore Defaults") { settings.actions = TextAction.defaults }
-                }
+        } header: {
+            Text("Popup")
+        } footer: {
+            Text("Open Text Assistant… in the Mac Tools menu, or your shortcut, opens a panel next to the pointer: pick a mode and a tone with ↑↓ and ←→ (or a number or letter) and press Return. Esc cancels. No shortcut is set until you record one.")
+                .settingsFootnote()
+        }
+
+        Section {
+            Toggle("Show quick actions", isOn: $settings.quickActionsEnabled)
+            if settings.quickActionsEnabled {
+                quickActionRows
             }
         } header: {
             Text("Quick Actions")
         } footer: {
-            Text("Each action runs on the selected text from the Mac Tools menu. Shortcuts are optional; none is set until you record one.")
+            Text("Each action runs on the selected text straight from the Mac Tools menu, without the popup. Shortcuts are optional; none is set until you record one.")
                 .settingsFootnote()
         }
 
@@ -265,6 +275,34 @@ struct TextAssistantSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
         }
+    }
+
+    @ViewBuilder private var quickActionRows: some View {
+            ForEach($settings.actions) { $action in
+                QuickActionRow(action: $action, config: configStore.config) {
+                    settings.actions.removeAll { $0.id == action.id }
+                }
+            }
+            HStack {
+                Button {
+                    let config = configStore.config
+                    settings.actions.append(TextAction(
+                        modeID: config.modes.first?.id ?? "improve",
+                        toneID: config.tone(id: "my-style")?.id ?? config.tones.first?.id ?? "my-style"
+                    ))
+                } label: {
+                    Label("Add Action", systemImage: "plus")
+                }
+                Spacer()
+                if settings.actions != TextAction.defaults {
+                    Button("Restore Defaults") { settings.actions = TextAction.defaults }
+                }
+            }
+    }
+
+    /// Keeps a stored ID selectable after config.json drops it, so the picker isn't blank.
+    @ViewBuilder private func missingTag(_ id: String, known: [String]) -> some View {
+        if !id.isEmpty, !known.contains(id) { Text("“\(id)” (missing)").tag(id) }
     }
 
     private var styleSummary: String {

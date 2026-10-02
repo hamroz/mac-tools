@@ -239,6 +239,43 @@ final class TextAssistantRunnerTests: XCTestCase {
         XCTAssertEqual(model, "deepseek/deepseek-flash")
     }
 
+    func test_PopupSelectionIsReadOnceAndUsedForTheRun() async throws {
+        environment.copySelection = "from the popup"
+        var received = ""
+        let runner = makeRunner(FakeProvider { request in
+            await MainActor.run { received = request.user }
+            return "From the popup."
+        })
+
+        let selection = try await runner.captureSelection()
+        XCTAssertEqual(pasteboard.snapshot(), original, "The clipboard is back before the popup takes focus")
+        environment.copySelection = "something else"
+        runner.run(modeID: "improve", toneID: "my-style", selection: selection)
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(environment.posted, [.copy, .paste], "No second ⌘C")
+        XCTAssertTrue(received.contains("from the popup"))
+        XCTAssertEqual(environment.pasted, ["From the popup."])
+        XCTAssertEqual(pasteboard.snapshot(), original)
+    }
+
+    func test_OpeningThePopupStopsTheRunInFlight() async throws {
+        environment.copySelection = "text"
+        let provider = FakeProvider { _ in
+            try await Task.sleep(for: .seconds(5))
+            return "slow"
+        }
+        let runner = makeRunner(provider)
+        runner.run(.improve)
+        await waitUntil { provider.calls == 1 }
+
+        _ = try await runner.captureSelection()
+        await runner.waitUntilIdle()
+
+        XCTAssertEqual(environment.pasted, [])
+        XCTAssertEqual(pasteboard.snapshot(), original)
+    }
+
     func test_QuickActionsDefaultWithoutShortcutsAndPersist() {
         let settings = TextAssistantSettings(defaults: defaults)
         XCTAssertEqual(settings.actions.map { $0.title(in: .defaults) },
