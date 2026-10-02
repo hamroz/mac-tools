@@ -340,7 +340,7 @@ final class ComboRecorder: ObservableObject {
             stop()
             return true
         }
-        onRecord?(KeyCombo(keyCode: keyCode, modifiers: modifiers))
+        onRecord?(KeyCombo(keyCode: keyCode, cocoaFlags: flags))
         stop()
         return true
     }

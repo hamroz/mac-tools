@@ -48,7 +48,7 @@ public enum RectangleShortcuts {
                 combos[key] = nil // cleared in Rectangle's settings
             } else if let keyCode = PlistValue.keyCode(stored["keyCode"]),
                       let flags = PlistValue.modifierBits(stored["modifierFlags"]) {
-                combos[key] = KeyCombo(keyCode: keyCode, modifiers: ShortcutModifiers(cocoa: flags))
+                combos[key] = KeyCombo(keyCode: keyCode, cocoaFlags: flags)
             }
         }
         let source = ShortcutSource.app(bundleID: bundleID, name: "Rectangle")

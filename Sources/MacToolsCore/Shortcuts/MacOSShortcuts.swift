@@ -123,7 +123,7 @@ public enum MacOSShortcuts {
         else { return .unreadable }
         if rawKey == 65535 { return .cleared }
         guard let keyCode = PlistValue.keyCode(rawKey) else { return .unreadable }
-        return .combo(KeyCombo(keyCode: keyCode, modifiers: ShortcutModifiers(cocoa: flags)))
+        return .combo(KeyCombo(keyCode: keyCode, cocoaFlags: flags))
     }
 
     /// System shortcuts that can't be changed and aren't in the symbolic hotkey plist.

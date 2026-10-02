@@ -50,7 +50,7 @@ public enum PreferenceShortcutScanner {
             guard let keyCode = PlistValue.keyCode(dictionary["keyCode"]),
                   let flags = PlistValue.modifierBits(dictionary["modifierFlags"] ?? dictionary["modifiers"])
             else { return nil }
-            return KeyCombo(keyCode: keyCode, modifiers: ShortcutModifiers(cocoa: flags))
+            return KeyCombo(keyCode: keyCode, cocoaFlags: flags)
         }
         if dictionary["carbonKeyCode"] != nil {
             return carbonCombo(dictionary)

@@ -30,11 +30,14 @@ final class KeyComboTests: XCTestCase {
         XCTAssertEqual(KeyCombo(keyCode: 20, modifiers: [.command, .shift, .control]).displayString, "⌃⇧⌘3")
     }
 
-    func test_implicitFunctionFlagIsDropped() {
+    func test_implicitFunctionFlagIsDroppedOnlyForCocoaFlags() {
         // Cocoa reports arrows and F-keys with the function flag; Carbon sources don't.
-        XCTAssertEqual(KeyCombo(keyCode: 126, modifiers: [.control, .function]), KeyCombo(keyCode: 126, modifiers: [.control]))
-        XCTAssertEqual(KeyCombo(keyCode: 122, modifiers: [.control, .function]).displayString, "⌃F1")
-        XCTAssertEqual(KeyCombo(keyCode: 12, modifiers: [.function]).modifiers, [.function])
+        XCTAssertEqual(KeyCombo(keyCode: 126, cocoaFlags: 0x840000), KeyCombo(keyCode: 126, modifiers: [.control]))
+        XCTAssertEqual(KeyCombo(keyCode: 122, cocoaFlags: 0x840000).displayString, "⌃F1")
+        XCTAssertEqual(KeyCombo(keyCode: 12, cocoaFlags: 0x800000).modifiers, [.function])
+        // An explicit Globe flag (from app menus) is kept: Move & Resize ▸ Left is fn⌃←, not ⌃←.
+        XCTAssertEqual(KeyCombo(keyCode: 123, modifiers: ShortcutModifiers(axMenu: 28)).displayString, "fn⌃←")
+        XCTAssertNotEqual(KeyCombo(keyCode: 123, modifiers: [.control, .function]), KeyCombo(keyCode: 123, modifiers: [.control]))
     }
 
     func test_searchTextHasWords() {

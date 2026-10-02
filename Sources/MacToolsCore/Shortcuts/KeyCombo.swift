@@ -68,10 +68,16 @@ public struct KeyCombo: Hashable, Codable, Sendable, Comparable, CustomStringCon
     public let keyCode: UInt16
     public let modifiers: ShortcutModifiers
 
-    /// Drops the function flag Cocoa adds to arrows and F-keys, so the same key matches across sources.
     public init(keyCode: UInt16, modifiers: ShortcutModifiers) {
         self.keyCode = keyCode
-        self.modifiers = KeyNames.impliesFunctionFlag(keyCode) ? modifiers.subtracting(.function) : modifiers
+        self.modifiers = modifiers
+    }
+
+    /// From `NSEvent.ModifierFlags` bits. Cocoa sets the function flag on every arrow and F-key,
+    /// so it is dropped there to match the same key from other sources.
+    public init(keyCode: UInt16, cocoaFlags: Int) {
+        let modifiers = ShortcutModifiers(cocoa: cocoaFlags)
+        self.init(keyCode: keyCode, modifiers: KeyNames.impliesFunctionFlag(keyCode) ? modifiers.subtracting(.function) : modifiers)
     }
 
     /// Parses an `NSUserKeyEquivalents` value such as `@$k` (⇧⌘K).
