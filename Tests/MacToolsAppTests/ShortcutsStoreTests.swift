@@ -22,12 +22,13 @@ final class ShortcutsStoreTests: XCTestCase {
         try data.write(to: root.appendingPathComponent("Preferences/\(name).plist"))
     }
 
-    private func makeStore(installed: [String: String] = [:]) -> ShortcutsStore {
+    private func makeStore(installed: [String: String] = [:], running: [ShortcutsStore.RunningApp] = []) -> ShortcutsStore {
         let note = ShortcutEntry(combo: KeyCombo(keyCode: 45, modifiers: [.control, .option]), action: "New Note", detail: "Desktop Stickies", source: .macTools, scope: .global)
         return ShortcutsStore(
             cache: MenuShortcutCacheStore(url: root.appendingPathComponent("cache.json")),
             preferencesDirectory: root.appendingPathComponent("Preferences"),
             appLocator: { bundleID in installed[bundleID].map { URL(fileURLWithPath: "/Applications/\($0).app") } },
+            runningApplications: { running },
             macToolsShortcuts: { [note] }
         )
     }
@@ -52,6 +53,15 @@ final class ShortcutsStoreTests: XCTestCase {
         XCTAssertEqual(store.catalog.conflicts[KeyCombo(keyCode: 45, modifiers: [.control, .option])]?.count, 2)
         XCTAssertNotNil(store.lastScan)
         XCTAssertFalse(store.isScanning)
+    }
+
+    func test_menuBarAppsCountAsRunning() async throws {
+        // Rectangle is an LSUIElement (accessory) app: it has no Dock icon but its hotkeys are live.
+        let rectangle = ShortcutsStore.RunningApp(pid: 1, bundleID: RectangleShortcuts.bundleID, name: "Rectangle", isRegular: false)
+        let store = makeStore(installed: [RectangleShortcuts.bundleID: "Rectangle"], running: [rectangle])
+        await store.refresh(captureMenus: false)
+        let leftHalf = try XCTUnwrap(store.catalog.globalEntries.first { $0.action == "Left Half" })
+        XCTAssertTrue(leftHalf.isSourceRunning)
     }
 
     func test_rectangleNeedsToBeInstalled() async {

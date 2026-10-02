@@ -18,6 +18,7 @@ final class ShortcutsStore: ObservableObject {
     private let cache: MenuShortcutCacheStore
     private let preferencesDirectory: URL
     private let appLocator: AppLocator
+    private let runningApplications: @MainActor () -> [RunningApp]
     private let macToolsShortcuts: @MainActor () -> [ShortcutEntry]
     private var settingsEntries: [ShortcutEntry] = []
     private var runningBundleIDs: Set<String> = []
@@ -27,11 +28,15 @@ final class ShortcutsStore: ObservableObject {
         cache: MenuShortcutCacheStore = MenuShortcutCacheStore(),
         preferencesDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences"),
         appLocator: @escaping AppLocator = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) },
+        runningApplications: @escaping @MainActor () -> [RunningApp] = {
+            NSWorkspace.shared.runningApplications.compactMap(RunningApp.init)
+        },
         macToolsShortcuts: @escaping @MainActor () -> [ShortcutEntry]
     ) {
         self.cache = cache
         self.preferencesDirectory = preferencesDirectory
         self.appLocator = appLocator
+        self.runningApplications = runningApplications
         self.macToolsShortcuts = macToolsShortcuts
         capturedApps = cache.load()
     }
@@ -57,7 +62,8 @@ final class ShortcutsStore: ObservableObject {
             lastScan = Date()
         }
 
-        let running = runningApps()
+        let running = runningApplications()
+        // Menu-bar apps (no Dock icon) count as running: their global shortcuts are live.
         runningBundleIDs = Set(running.map(\.bundleID))
         let directory = preferencesDirectory
         let locator = appLocator
@@ -71,7 +77,7 @@ final class ShortcutsStore: ObservableObject {
         rebuild()
 
         guard captureMenus, AXIsProcessTrusted() else { return }
-        for app in running {
+        for app in running where app.isRegular {
             progress = "Reading \(app.name)’s menus…"
             if let captured = await Self.captureOffMain(app) {
                 capturedApps[app.bundleID] = captured
@@ -83,7 +89,7 @@ final class ShortcutsStore: ObservableObject {
 
     /// Reads one app's menus, e.g. right after it launches.
     func capture(app: NSRunningApplication) async {
-        guard AXIsProcessTrusted(), let target = RunningApp(app), let captured = await Self.captureOffMain(target) else { return }
+        guard AXIsProcessTrusted(), let target = RunningApp(app), target.isRegular, let captured = await Self.captureOffMain(target) else { return }
         capturedApps[target.bundleID] = captured
         runningBundleIDs.insert(target.bundleID)
         rebuild()
@@ -112,19 +118,24 @@ final class ShortcutsStore: ObservableObject {
         let pid: pid_t
         let bundleID: String
         let name: String
+        /// Has a Dock icon and menu bar; only these have menus worth reading.
+        let isRegular: Bool
+
+        init(pid: pid_t, bundleID: String, name: String, isRegular: Bool) {
+            self.pid = pid
+            self.bundleID = bundleID
+            self.name = name
+            self.isRegular = isRegular
+        }
 
         init?(_ app: NSRunningApplication) {
-            guard app.activationPolicy == .regular, !app.isTerminated,
-                  let bundleID = app.bundleIdentifier, bundleID != Bundle.main.bundleIdentifier
+            guard !app.isTerminated, let bundleID = app.bundleIdentifier, bundleID != Bundle.main.bundleIdentifier
             else { return nil }
-            pid = app.processIdentifier
-            self.bundleID = bundleID
-            name = app.localizedName ?? bundleID
+            self.init(
+                pid: app.processIdentifier, bundleID: bundleID, name: app.localizedName ?? bundleID,
+                isRegular: app.activationPolicy == .regular
+            )
         }
-    }
-
-    private func runningApps() -> [RunningApp] {
-        NSWorkspace.shared.runningApplications.compactMap(RunningApp.init)
     }
 
     private static func captureOffMain(_ app: RunningApp) async -> CapturedApp? {
