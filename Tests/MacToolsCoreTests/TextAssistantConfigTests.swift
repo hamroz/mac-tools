@@ -64,6 +64,7 @@ final class TextAssistantConfigTests: XCTestCase {
         XCTAssertTrue(request.system.contains("Tone:\nKeep the author's own voice"))
         XCTAssertTrue(request.system.hasSuffix("<style_samples>\n## English\nsample\n</style_samples>"))
         XCTAssertTrue(request.system.contains("Never copy their content"))
+        XCTAssertTrue(request.system.contains("never add details the text doesn't contain"), "The guide can't introduce facts")
         XCTAssertEqual(request.user, "<text>\nhi\n</text>")
         XCTAssertEqual(request.model, "opencode/claude-haiku-4-5")
 
